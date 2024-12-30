@@ -4,6 +4,10 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 use xml2arrow::config::Config;
+use xml2arrow::errors::{
+    NoTableOnStackError, ParseError, TableNotFoundError, UnsupportedDataTypeError, XmlParsingError,
+    YamlParsingError,
+};
 use xml2arrow::parse_xml;
 
 /// A parser for converting XML files to Arrow tables based on a configuration.
@@ -53,7 +57,16 @@ impl XmlToArrowParser {
 
 /// A Python module for parsing XML files to Arrow RecordBatches.
 #[pymodule]
-fn _xml2arrow(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _xml2arrow(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<XmlToArrowParser>()?;
+    m.add("XmlParsingError", py.get_type::<XmlParsingError>())?;
+    m.add("YamlParsingError", py.get_type::<YamlParsingError>())?;
+    m.add(
+        "UnsupportedDataTypeError",
+        py.get_type::<UnsupportedDataTypeError>(),
+    )?;
+    m.add("TableNotFoundError", py.get_type::<TableNotFoundError>())?;
+    m.add("NoTableOnStackError", py.get_type::<NoTableOnStackError>())?;
+    m.add("ParseError", py.get_type::<ParseError>())?;
     Ok(())
 }
