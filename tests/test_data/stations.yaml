@@ -1,0 +1,73 @@
+tables:
+  - name: report
+    xml_path: /
+    row_element: report
+    levels: []
+    fields:
+    - name: title
+      xml_path: /report/header/title
+      data_type: Utf8
+      nullable: false
+    - name: created_by
+      xml_path: /report/header/created_by
+      data_type: Utf8
+      nullable: false
+    - name: creation_time
+      xml_path: /report/header/creation_time
+      data_type: Utf8
+      nullable: false
+  - name: stations
+    xml_path: /report/monitoring_stations
+    row_element: monitoring_station
+    levels:
+    - station
+    fields:
+    - name: id
+      xml_path: /report/monitoring_stations/monitoring_station/id
+      data_type: Utf8
+      nullable: false
+    - name: latitude
+      xml_path: /report/monitoring_stations/monitoring_station/location/latitude
+      data_type: Float32
+      nullable: false
+    - name: longitude
+      xml_path: /report/monitoring_stations/monitoring_station/location/longitude
+      data_type: Float32
+      nullable: false
+    - name: elevation
+      xml_path: /report/monitoring_stations/monitoring_station/location/elevation
+      data_type: Float32
+      nullable: false
+    - name: description
+      xml_path: report/monitoring_stations/monitoring_station/metadata/description
+      data_type: Utf8
+      nullable: false
+    - name: install_date
+      xml_path: report/monitoring_stations/monitoring_station/metadata/install_date
+      data_type: Utf8
+      nullable: false
+  - name: measurements
+    xml_path: /report/monitoring_stations/monitoring_station/measurements
+    row_element: measurement
+    levels:
+    - station
+    - measurement
+    fields:
+    - name: timestamp
+      xml_path: /report/monitoring_stations/monitoring_station/measurements/measurement/timestamp
+      data_type: Utf8
+      nullable: false
+    - name: temperature
+      xml_path: /report/monitoring_stations/monitoring_station/measurements/measurement/temperature
+      data_type: Float64
+      nullable: false
+      offset: 273.15  # Convert from Celsius to Kelvin
+    - name: pressure
+      xml_path: /report/monitoring_stations/monitoring_station/measurements/measurement/pressure
+      data_type: Float64
+      nullable: false
+      scale: 100.0  # Convert from hPa to Pa
+    - name: humidity
+      xml_path: /report/monitoring_stations/monitoring_station/measurements/measurement/humidity
+      data_type: Float64
+      nullable: false
