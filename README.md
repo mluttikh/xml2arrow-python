@@ -96,7 +96,7 @@ We can define a YAML configuration file (`stations.yaml`) to specify how to conv
 tables:
   - name: report
     xml_path: /
-    row_element: /
+    row_element: report
     levels: []
     fields:
     - name: title
@@ -113,7 +113,7 @@ tables:
       nullable: false
   - name: stations
     xml_path: /report/monitoring_stations
-    row_element: /report/monitoring_stations/monitoring_station
+    row_element: monitoring_station
     levels:
     - station
     fields:
@@ -143,7 +143,7 @@ tables:
       nullable: false
   - name: measurements
     xml_path: /report/monitoring_stations/monitoring_station/measurements
-    row_element: /report/monitoring_stations/monitoring_station/measurements/measurement
+    row_element: measurement
     levels:
     - station
     - measurement
