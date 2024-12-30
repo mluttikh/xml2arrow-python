@@ -1,0 +1,73 @@
+<report>
+  <header>
+    <title>Meteorological Station Data</title>
+    <created_by>National Weather Service</created_by>
+    <creation_time>2024-12-30T13:59:15Z</creation_time>
+  </header>
+  <monitoring_stations>
+    <monitoring_station>
+      <id>MS001</id>
+      <location>
+        <latitude>-61.39110459389277</latitude>
+        <longitude>48.08662749089257</longitude>
+        <elevation unit="m">547.1050788360882</elevation>
+      </location>
+      <measurements>
+        <measurement>
+          <timestamp>2024-12-30T12:39:15Z</timestamp>
+          <temperature unit="C">35.486545480326114</temperature>
+          <pressure unit="hPa">950.439973486407</pressure>
+          <humidity unit="%">49.77716576844861</humidity>
+        </measurement>
+        <measurement>
+          <timestamp>2024-12-30T12:44:15Z</timestamp>
+          <temperature unit="C">29.095166644493865</temperature>
+          <pressure unit="hPa">1049.3215015450517</pressure>
+          <humidity unit="%">32.5687148391251</humidity>
+        </measurement>
+      </measurements>
+      <metadata>
+        <description>Located in the Arctic Tundra area, used for Scientific Research.</description>
+        <install_date>2024-03-31</install_date>
+      </metadata>
+    </monitoring_station>
+    <monitoring_station>
+      <id>MS002</id>
+      <location>
+        <latitude>11.891496388319311</latitude>
+        <longitude>135.09336983543022</longitude>
+        <elevation unit="m">174.53349357280004</elevation>
+      </location>
+      <measurements>
+        <measurement>
+          <timestamp>2024-12-30T12:39:15Z</timestamp>
+          <temperature unit="C">24.791842953632283</temperature>
+          <pressure unit="hPa">989.4054287187706</pressure>
+          <humidity unit="%">57.70794884397625</humidity>
+        </measurement>
+        <measurement>
+          <timestamp>2024-12-30T12:44:15Z</timestamp>
+          <temperature unit="C">15.153690541845911</temperature>
+          <pressure unit="hPa">1001.413052919951</pressure>
+          <humidity unit="%">45.45094598045342</humidity>
+        </measurement>
+        <measurement>
+          <timestamp>2024-12-30T12:49:15Z</timestamp>
+          <temperature unit="C">-4.022555715139081</temperature>
+          <pressure unit="hPa">1000.5225751769922</pressure>
+          <humidity unit="%">70.40117458947834</humidity>
+        </measurement>
+        <measurement>
+          <timestamp>2024-12-30T12:54:15Z</timestamp>
+          <temperature unit="C">25.852920542644185</temperature>
+          <pressure unit="hPa">953.762785698162</pressure>
+          <humidity unit="%">42.62088244545566</humidity>
+        </measurement>
+      </measurements>
+      <metadata>
+        <description>Located in the Desert area, used for Weather Forecasting.</description>
+        <install_date>2024-01-17</install_date>
+      </metadata>
+    </monitoring_station>
+  </monitoring_stations>
+</report>
