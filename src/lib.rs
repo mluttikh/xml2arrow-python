@@ -48,7 +48,8 @@ impl Read for FileOrFileLike {
 /// A parser for converting XML files to Arrow tables based on a configuration.
 #[pyclass(name = "XmlToArrowParser")]
 pub struct XmlToArrowParser {
-    pub config: Config,
+    config_path: PathBuf,
+    config: Config,
 }
 
 #[pymethods]
@@ -63,6 +64,7 @@ impl XmlToArrowParser {
     #[new]
     pub fn new(config_path: PathBuf) -> PyResult<Self> {
         Ok(XmlToArrowParser {
+            config_path: config_path.clone(),
             config: Config::from_yaml_file(config_path)?,
         })
     }
@@ -86,6 +88,13 @@ impl XmlToArrowParser {
             }
             Ok(tables.into())
         })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "XmlToArrowParser(config_path='{}')",
+            self.config_path.to_string_lossy()
+        )
     }
 }
 
