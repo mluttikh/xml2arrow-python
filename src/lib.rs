@@ -1,7 +1,8 @@
 use arrow::pyarrow::ToPyArrow;
 use pyo3::{prelude::*, types::PyDict};
+use pyo3_file::PyFileLikeObject;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use xml2arrow::config::Config;
 use xml2arrow::errors::{
@@ -9,6 +10,40 @@ use xml2arrow::errors::{
     YamlParsingError,
 };
 use xml2arrow::parse_xml;
+
+/// Represents either a path `File` or a file-like object `FileLike`
+#[derive(Debug)]
+pub enum FileOrFileLike {
+    File(File),
+    FileLike(PyFileLikeObject),
+}
+
+impl<'py> FromPyObject<'py> for FileOrFileLike {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        if let Ok(path) = ob.extract::<PathBuf>() {
+            Ok(Self::File(File::open(path)?))
+        } else if let Ok(path) = ob.extract::<String>() {
+            Ok(Self::File(File::open(path)?))
+        } else {
+            Ok(Self::FileLike(PyFileLikeObject::with_requirements(
+                ob.clone().unbind(),
+                true,
+                false,
+                false,
+                false,
+            )?))
+        }
+    }
+}
+
+impl Read for FileOrFileLike {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::File(f) => f.read(buf),
+            Self::FileLike(f) => f.read(buf),
+        }
+    }
+}
 
 /// A parser for converting XML files to Arrow tables based on a configuration.
 #[pyclass(name = "XmlToArrowParser")]
@@ -35,14 +70,13 @@ impl XmlToArrowParser {
     /// Parses an XML file and returns a dictionary of Arrow RecordBatches.
     ///
     /// Args:
-    ///     path (str or PathLike): The path to the XML file to parse.
+    ///     source (str, PathLike or file like object): The XML file to parse.
     ///
     /// Returns:
     ///     dict: A dictionary where keys are table names (strings) and values are PyArrow RecordBatch objects.
-    #[pyo3(signature = (path))]
-    pub fn parse(&self, path: PathBuf) -> PyResult<PyObject> {
-        let file = File::open(path)?;
-        let reader = BufReader::new(file);
+    #[pyo3(signature = (source))]
+    pub fn parse(&self, source: FileOrFileLike) -> PyResult<PyObject> {
+        let reader = BufReader::new(source);
         let batches = parse_xml(reader, &self.config)?;
         Python::with_gil(|py| {
             let tables = PyDict::new(py);

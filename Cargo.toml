@@ -11,6 +11,7 @@ crate-type = ["cdylib"]
 [dependencies]
 xml2arrow = { version = "0.3.0", features = ["python"] }
 arrow = { version = "54.0.0", features = ["pyarrow", "pyo3"] }
+pyo3-file = "0.10.0"
 
 [dependencies.pyo3]
 version = "0.23.3"
