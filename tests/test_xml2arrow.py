@@ -10,9 +10,13 @@ def test_data_dir() -> Path:
     return Path(__file__).parent / "test_data"
 
 
-def test_xml_to_arrow_parser(test_data_dir: Path) -> None:
+@pytest.fixture(scope="module")
+def parser(test_data_dir: Path) -> XmlToArrowParser:
     config_path = test_data_dir / "stations.yaml"
-    parser = XmlToArrowParser(config_path)
+    return XmlToArrowParser(config_path)
+
+
+def test_xml_to_arrow_parser(parser: XmlToArrowParser, test_data_dir: Path) -> None:
     xml_path = test_data_dir / "stations.xml"
     record_batches = parser.parse(xml_path)
 
@@ -127,12 +131,18 @@ def test_xml_to_arrow_parser(test_data_dir: Path) -> None:
     )
 
 
-def test_xml_to_arrow_parser_file(test_data_dir: Path) -> None:
-    config_path = test_data_dir / "stations.yaml"
-    parser = XmlToArrowParser(config_path)
+def test_xml_to_arrow_parser_file(
+    parser: XmlToArrowParser, test_data_dir: Path
+) -> None:
     xml_path = test_data_dir / "stations.xml"
     with open(xml_path, "r") as f:
         record_batches = parser.parse(f)
     assert "report" in record_batches
     assert "stations" in record_batches
     assert "measurements" in record_batches
+
+
+def test_xml_to_arrow_parser_repr(parser: XmlToArrowParser) -> None:
+    repr_str = repr(parser)
+    assert repr_str.startswith("XmlToArrowParser(config_path='")
+    assert repr_str.endswith("stations.yaml')")
