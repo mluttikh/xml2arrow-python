@@ -27,7 +27,7 @@ tables:
       - station
     fields:
       - name: id
-        xml_path: /report/monitoring_stations/monitoring_station/id
+        xml_path: /report/monitoring_stations/monitoring_station/@id
         data_type: Utf8
         nullable: false
       - name: latitude

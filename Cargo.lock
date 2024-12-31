@@ -927,9 +927,9 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
-version = "0.37.1"
+version = "0.37.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f22f29bdff3987b4d8632ef95fd6424ec7e4e0a57e2f4fc63e489e75357f6a03"
+checksum = "165859e9e55f79d67b96c5d96f4e88b6f2695a1972849c15a6a3f5c59fc2c003"
 dependencies = [
  "memchr",
 ]
@@ -1363,19 +1363,19 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "xml2arrow"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "arrow",
  "pyo3",
  "pyo3-file",
- "xml2arrow 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "xml2arrow 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "xml2arrow"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3aa545ecefcaf1179372c77e9b6a958652fd5c7be0dd2819e49aef1863bc33b"
+checksum = "75cb8222ade61dd354ccddd9cc779d8111515bf01982230f1a77889c015182f5"
 dependencies = [
  "arrow",
  "derive_more",
