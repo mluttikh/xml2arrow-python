@@ -1,7 +1,6 @@
 tables:
   - name: report
     xml_path: /
-    row_element: report
     levels: []
     fields:
       - name: title
@@ -22,7 +21,6 @@ tables:
         nullable: true # Not available in XML
   - name: stations
     xml_path: /report/monitoring_stations
-    row_element: monitoring_station
     levels:
       - station
     fields:
@@ -52,7 +50,6 @@ tables:
         nullable: false
   - name: measurements
     xml_path: /report/monitoring_stations/monitoring_station/measurements
-    row_element: measurement
     levels:
       - station
       - measurement
@@ -60,18 +57,14 @@ tables:
       - name: timestamp
         xml_path: /report/monitoring_stations/monitoring_station/measurements/measurement/timestamp
         data_type: Utf8
-        nullable: false
       - name: temperature
         xml_path: /report/monitoring_stations/monitoring_station/measurements/measurement/temperature
         data_type: Float64
-        nullable: false
         offset: 273.15 # Convert from Celsius to Kelvin
       - name: pressure
         xml_path: /report/monitoring_stations/monitoring_station/measurements/measurement/pressure
         data_type: Float64
-        nullable: false
         scale: 100.0 # Convert from hPa to Pa
       - name: humidity
         xml_path: /report/monitoring_stations/monitoring_station/measurements/measurement/humidity
         data_type: Float64
-        nullable: false
