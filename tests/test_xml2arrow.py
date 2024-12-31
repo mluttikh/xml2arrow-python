@@ -5,10 +5,15 @@ import pytest
 from xml2arrow import XmlToArrowParser
 
 
-def test_xml_to_arrow_parser_pyarrow():
-    config_path = Path(__file__).parent / "test_data" / "stations.yaml"
+@pytest.fixture(scope="module")
+def test_data_dir() -> Path:
+    return Path(__file__).parent / "test_data"
+
+
+def test_xml_to_arrow_parser(test_data_dir: Path) -> None:
+    config_path = test_data_dir / "stations.yaml"
     parser = XmlToArrowParser(config_path)
-    xml_path = Path(__file__).parent / "test_data" / "stations.xml"
+    xml_path = test_data_dir / "stations.xml"
     record_batches = parser.parse(xml_path)
 
     # Check if the correct tables are returned
@@ -21,6 +26,7 @@ def test_xml_to_arrow_parser_pyarrow():
         "title": ["Meteorological Station Data"],
         "created_by": ["National Weather Service"],
         "creation_time": ["2024-12-30T13:59:15Z"],
+        "document_type": [None],
     }
     expected_stations = {
         "<station>": [0, 1],
@@ -79,6 +85,7 @@ def test_xml_to_arrow_parser_pyarrow():
             pa.field("title", pa.string(), nullable=False),
             pa.field("created_by", pa.string(), nullable=False),
             pa.field("creation_time", pa.string(), nullable=False),
+            pa.field("document_type", pa.string(), nullable=True),
         ]
     )
 
@@ -118,3 +125,14 @@ def test_xml_to_arrow_parser_pyarrow():
             pa.field("humidity", pa.float64(), nullable=False),
         ]
     )
+
+
+def test_xml_to_arrow_parser_file(test_data_dir: Path) -> None:
+    config_path = test_data_dir / "stations.yaml"
+    parser = XmlToArrowParser(config_path)
+    xml_path = test_data_dir / "stations.xml"
+    with open(xml_path, "r") as f:
+        record_batches = parser.parse(f)
+    assert "report" in record_batches
+    assert "stations" in record_batches
+    assert "measurements" in record_batches
