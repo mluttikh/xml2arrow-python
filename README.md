@@ -1,3 +1,8 @@
+[![PyPI version](https://badge.fury.io/py/xml2arrow.svg)](https://badge.fury.io/py/xml2arrow)
+[![Downloads](https://pepy.tech/badge/xml2arrow)](https://pepy.tech/project/xml2arrow)
+[![Build Status](https://github.com/mluttikh/xml2arrow-python/actions/workflows/CI.yml/badge.svg)](https://github.com/mluttikh/xml2arrow-python/actions/workflows/CI.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python Versions](https://img.shields.io/pypi/pyversions/xml2arrow)](https://pypi.org/project/xml2arrow/)
 # XML2ARROW-PYTHON
 
 A Python package for efficiently converting XML files to Apache Arrow tables using a YAML configuration. This package leverages the [xml2arrow](https://github.com/mluttikh/xml2arrow) Rust crate for high performance.
