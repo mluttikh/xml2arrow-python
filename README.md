@@ -23,7 +23,6 @@ The configuration file (YAML format) defines how your XML structure maps to Arro
 tables:
   - name: <table_name>         # The name of the resulting Arrow table
     xml_path: <xml_path>       # The XML path to the *parent* element of the table's row elements
-    row_element: <row_element> # The name of the XML element that represents a row
     levels:                    # Index levels for nested XML structures.
     - <level1>
     - <level2> 
@@ -39,8 +38,7 @@ tables:
 
 * `tables`: A list of table configurations. Each entry defines a separate Arrow table to be extracted from the XML.
 * `name`: The name given to the resulting Arrow *RecordBatch* (which represents a table).
-* `xml_path`: An XPath-like string that specifies the XML element that is the parent of the elements representing rows in the table. For example, if your XML contains `<library><book>...</book><book>...</book></library>`, the `xml_path` would be `/library`. The `book` elements are then identified by the `row_element` configuration.
-* `row_element`: The element that represents a single row. For example, if the xml_path is `/library/book`, the `row_element` is `book`.
+* `xml_path`: An XPath-like string that specifies the XML element that is the parent of the elements representing rows in the table. For example, if your XML contains `<library><book>...</book><book>...</book></library>`, the `xml_path` would be `/library`.
 * `levels`: An array of strings that represent parent tables to create an index for nested structures. If the XML structure is `/library/shelfs/shelf/books/book` you should define levels like this: `levels: ["shelfs", "books"]`. This will create indexes named `<shelfs>` and `<books>`.
 * `fields`: A list of field configurations for each column in the Arrow table.
   * `name`: The name of the field in the Arrow schema.
@@ -56,7 +54,7 @@ tables:
     * `Float32`
     * `Float64`
     * `Utf8` (Strings)
-  * `nullable`: A boolean value indicating whether the field can contain null values.
+  * `nullable`: A boolean value indicating whether the field can contain null values. This field is optional and defaults to `false` if not specified.
   * `scale` (Optional): A scaling factor for float fields (e.g., to convert units).
   * `offset` (Optional): An offset value for float fields (e.g., to convert units).
 
@@ -152,7 +150,6 @@ We can define a YAML configuration file (`stations.yaml`) to specify how to conv
 tables:
   - name: report
     xml_path: /
-    row_element: report
     levels: []
     fields:
     - name: title
@@ -169,7 +166,6 @@ tables:
       nullable: false
   - name: stations
     xml_path: /report/monitoring_stations
-    row_element: monitoring_station
     levels:
     - station
     fields:
@@ -199,7 +195,6 @@ tables:
       nullable: false
   - name: measurements
     xml_path: /report/monitoring_stations/monitoring_station/measurements
-    row_element: measurement
     levels:
     - station
     - measurement
