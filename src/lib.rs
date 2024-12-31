@@ -48,8 +48,8 @@ impl Read for FileOrFileLike {
 /// A parser for converting XML files to Arrow tables based on a configuration.
 #[pyclass(name = "XmlToArrowParser")]
 pub struct XmlToArrowParser {
-    pub config_path: PathBuf,
-    pub config: Config,
+    config_path: PathBuf,
+    config: Config,
 }
 
 #[pymethods]
