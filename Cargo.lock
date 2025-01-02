@@ -1363,19 +1363,19 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "xml2arrow"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "arrow",
  "pyo3",
  "pyo3-file",
- "xml2arrow 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "xml2arrow 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "xml2arrow"
-version = "0.6.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ce0527a595fc0e095eb939ff2d699f23756b4dcec7a425fb5940ccca32358e5"
+checksum = "0f6db54fd8e5f87d61ad357fd0816e5eefada7c8f3bf1ba57294c5fc10ec098e"
 dependencies = [
  "arrow",
  "derive_more",

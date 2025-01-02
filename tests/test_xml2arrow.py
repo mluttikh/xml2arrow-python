@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pytest
-from xml2arrow import Xml2ArrowError, XmlToArrowParser
+from xml2arrow import XmlToArrowParser
 from xml2arrow.exceptions import ParseError, YamlParsingError
 
 
@@ -48,7 +48,7 @@ def test_xml_to_arrow_parser(parser: XmlToArrowParser, test_data_dir: Path) -> N
     }
     expected_measurements = {
         "<station>": [0, 0, 1, 1, 1, 1],
-        "<measurement>": [0, 1, 2, 3, 4, 5],
+        "<measurement>": [0, 1, 0, 1, 2, 3],
         "timestamp": [
             "2024-12-30T12:39:15Z",
             "2024-12-30T12:44:15Z",
