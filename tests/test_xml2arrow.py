@@ -150,15 +150,10 @@ def test_xml_to_arrow_parser_repr(parser: XmlToArrowParser) -> None:
     assert repr_str.endswith("stations.yaml')")
 
 
-def test_xml_to_arrow_xml_2_arrow_error() -> None:
-    with pytest.raises(Xml2ArrowError):
-        with tempfile.NamedTemporaryFile(mode="w+") as f:
-            XmlToArrowParser(f.name)
-
-
 def test_xml_to_arrow_yaml_parsing_error() -> None:
     with pytest.raises(YamlParsingError):
         with tempfile.NamedTemporaryFile(mode="w+") as f:
+            # Empty file
             XmlToArrowParser(f.name)
 
 
