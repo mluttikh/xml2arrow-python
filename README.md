@@ -7,12 +7,6 @@
 
 A Python package for efficiently converting XML files to Apache Arrow tables using a YAML configuration. This package leverages the [xml2arrow](https://github.com/mluttikh/xml2arrow) Rust crate for high performance.
 
-## Installation
-
-```bash
-pip install xml2arrow
-```
-
 ## Features
 
 - 🚀 **High-performance** XML parsing using the [xml2arrow](https://github.com/mluttikh/xml2arrow) Rust crate
@@ -20,6 +14,12 @@ pip install xml2arrow
 - 🔄 **Nested Structure Support:** Handle deeply nested XML hierarchies
 - 🎯 **Customizable Type Conversion:** Automatically convert data types and apply unit conversion.
 - 💡 **Attribute & Element Extraction:** Seamlessly extract XML attributes or elements
+
+## Installation
+
+```bash
+pip install xml2arrow
+```
 
 ## Usage
 
