@@ -13,6 +13,14 @@ A Python package for efficiently converting XML files to Apache Arrow tables usi
 pip install xml2arrow
 ```
 
+## Features
+
+- 🚀 **High-performance** XML parsing using the [xml2arrow](https://github.com/mluttikh/xml2arrow) Rust crate
+- 📊 **Flexible Mapping:** Map complex XML structures to Apache Arrow with YAML
+- 🔄 **Nested Structure Support:** Handle deeply nested XML hierarchies
+- 🎯 **Customizable Type Conversion:** Automatically convert data types and apply unit conversion.
+- 💡 **Attribute & Element Extraction:** Seamlessly extract XML attributes or elements
+
 ## Usage
 
 1. Create a Configuration File (YAML):
@@ -45,6 +53,8 @@ tables:
   * `xml_path`: An XPath-like string that specifies the XML element or attribute containing the field's value. To select an attribute, append `@` followed by the attribute name to the element's path. For example, `/library/book/@id` selects the `id` attribute of the `book` element.
   * `data_type`: The Arrow data type of the field. Supported types are:
     * `Boolean` (*true* or *false*)
+    * `Int8`
+    * `UInt8`
     * `Int16`
     * `UInt16`
     * `Int32`
