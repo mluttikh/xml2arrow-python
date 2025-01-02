@@ -1,8 +1,10 @@
+import tempfile
 from pathlib import Path
 
 import pyarrow as pa
 import pytest
-from xml2arrow import XmlToArrowParser
+from xml2arrow import Xml2ArrowError, XmlToArrowParser
+from xml2arrow.exceptions import ParseError, YamlParsingError
 
 
 @pytest.fixture(scope="module")
@@ -146,3 +148,29 @@ def test_xml_to_arrow_parser_repr(parser: XmlToArrowParser) -> None:
     repr_str = repr(parser)
     assert repr_str.startswith("XmlToArrowParser(config_path='")
     assert repr_str.endswith("stations.yaml')")
+
+
+def test_xml_to_arrow_yaml_parsing_error() -> None:
+    with pytest.raises(YamlParsingError):
+        with tempfile.NamedTemporaryFile(mode="w+") as f:
+            # Empty file
+            XmlToArrowParser(f.name)
+
+
+def test_xml_to_arrow_parse_parse_error(parser: XmlToArrowParser) -> None:
+    with pytest.raises(ParseError):
+        with tempfile.TemporaryFile(mode="w+") as f:
+            f.write(r"""
+                <report>
+                    <monitoring_stations>
+                        <monitoring_station>
+                            <location>
+                                <latitude>not float</latitude>
+                            </location>
+                        </monitoring_station>
+                    </monitoring_stations>
+                </report>
+            """)
+            f.flush()  # Ensure data is written to the file
+            f.seek(0)  # Reset the file pointer to the beginning
+            parser.parse(f)
