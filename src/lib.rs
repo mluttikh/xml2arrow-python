@@ -6,10 +6,17 @@ use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use xml2arrow::config::Config;
 use xml2arrow::errors::{
-    NoTableOnStackError, ParseError, TableNotFoundError, UnsupportedDataTypeError, XmlParsingError,
-    YamlParsingError,
+    NoTableOnStackError, ParseError, TableNotFoundError, UnsupportedDataTypeError, Xml2ArrowError,
+    XmlParsingError, YamlParsingError,
 };
 use xml2arrow::parse_xml;
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[pyfunction]
+fn _get_version() -> &'static str {
+    VERSION
+}
 
 /// Represents either a path `File` or a file-like object `FileLike`
 #[derive(Debug)]
@@ -102,6 +109,7 @@ impl XmlToArrowParser {
 #[pymodule]
 fn _xml2arrow(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<XmlToArrowParser>()?;
+    m.add("Xml2ArrowError", py.get_type::<Xml2ArrowError>())?;
     m.add("XmlParsingError", py.get_type::<XmlParsingError>())?;
     m.add("YamlParsingError", py.get_type::<YamlParsingError>())?;
     m.add(
@@ -111,5 +119,6 @@ fn _xml2arrow(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TableNotFoundError", py.get_type::<TableNotFoundError>())?;
     m.add("NoTableOnStackError", py.get_type::<NoTableOnStackError>())?;
     m.add("ParseError", py.get_type::<ParseError>())?;
+    m.add_wrapped(wrap_pyfunction!(_get_version))?;
     Ok(())
 }
