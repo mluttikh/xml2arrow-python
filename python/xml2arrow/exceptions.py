@@ -4,6 +4,7 @@ from ._xml2arrow import (
     NoTableOnStackError,
     ParseError,
     TableNotFoundError,
+    UnsupportedConversionError,
     UnsupportedDataTypeError,
     Xml2ArrowError,
     XmlParsingError,
@@ -18,4 +19,5 @@ __all__ = [
     "TableNotFoundError",
     "NoTableOnStackError",
     "ParseError",
+    "UnsupportedConversionError",
 ]

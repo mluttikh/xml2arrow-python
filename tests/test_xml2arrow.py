@@ -4,7 +4,11 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 from xml2arrow import XmlToArrowParser
-from xml2arrow.exceptions import ParseError, YamlParsingError
+from xml2arrow.exceptions import (
+    ParseError,
+    UnsupportedConversionError,
+    YamlParsingError,
+)
 
 
 @pytest.fixture(scope="module")
@@ -174,3 +178,41 @@ def test_xml_to_arrow_parse_parse_error(parser: XmlToArrowParser) -> None:
             f.flush()  # Ensure data is written to the file
             f.seek(0)  # Reset the file pointer to the beginning
             parser.parse(f)
+
+
+def test_unsupported_conversion_error():
+    config_yaml = """
+        tables:
+        - name: test_table
+          xml_path: /root
+          levels: []
+          fields:
+          - name: test_field
+            xml_path: /root/field
+            data_type: Int32
+            nullable: false
+            scale: 2.0
+        """
+
+    xml_data = """
+        <root>
+            <field>10</field>
+        </root>
+        """
+
+    config_path = Path("test_config.yaml")
+    config_path.write_text(config_yaml)
+
+    xml_path = Path("test_data.xml")
+    xml_path.write_text(xml_data)
+
+    parser = XmlToArrowParser(config_path)
+
+    with pytest.raises(UnsupportedConversionError) as excinfo:
+        parser.parse(xml_path)
+
+    assert "Scaling is only supported for Float32 and Float64" in str(excinfo.value)
+    assert "Int32" in str(excinfo.value)
+
+    config_path.unlink()
+    xml_path.unlink()

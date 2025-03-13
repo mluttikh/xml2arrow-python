@@ -6,8 +6,8 @@ use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use xml2arrow::config::Config;
 use xml2arrow::errors::{
-    NoTableOnStackError, ParseError, TableNotFoundError, UnsupportedDataTypeError, Xml2ArrowError,
-    XmlParsingError, YamlParsingError,
+    NoTableOnStackError, ParseError, TableNotFoundError, UnsupportedConversionError,
+    UnsupportedDataTypeError, Xml2ArrowError, XmlParsingError, YamlParsingError,
 };
 use xml2arrow::parse_xml;
 
@@ -119,6 +119,10 @@ fn _xml2arrow(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TableNotFoundError", py.get_type::<TableNotFoundError>())?;
     m.add("NoTableOnStackError", py.get_type::<NoTableOnStackError>())?;
     m.add("ParseError", py.get_type::<ParseError>())?;
+    m.add(
+        "UnsupportedConversionError",
+        py.get_type::<UnsupportedConversionError>(),
+    )?;
     m.add_wrapped(wrap_pyfunction!(_get_version))?;
     Ok(())
 }
