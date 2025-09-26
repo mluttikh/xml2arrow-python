@@ -41,7 +41,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
 
       - name: install deps
-        run: uv sync
+        run: uv sync --group dev
 
       - name: build wheels
         run: uv run maturin build --release --target wasm32-unknown-emscripten --out dist -i 3.12
