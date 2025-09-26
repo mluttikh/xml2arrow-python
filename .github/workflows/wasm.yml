@@ -1,0 +1,64 @@
+name: wasm
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "**"
+  pull_request: {}
+
+env:
+  COLUMNS: 150
+  UV_PYTHON: 3.13
+
+jobs:
+  build-wasm-emscripten:
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v4
+
+    - name: install rust nightly
+      uses: dtolnay/rust-toolchain@master
+      with:
+        components: rust-src
+        targets: wasm32-unknown-emscripten
+        # might be able to unpin when pydodide uses emscripten 4, see below
+        toolchain: nightly-2025-02-17
+
+    - name: cache rust
+      uses: Swatinem/rust-cache@v2
+
+    - uses: mymindstorm/setup-emsdk@v14
+      with:
+        # NOTE!: as per https://github.com/pydantic/pydantic-core/pull/149 this version needs to match the version
+        # in node_modules/pyodide/pyodide-lock.json, to get the version, run:
+        # `cat node_modules/pyodide/pyodide-lock.json | jq .info.platform`
+        version: "3.1.58"
+        actions-cache-folder: emsdk-cache
+
+    - name: install uv
+      uses: astral-sh/setup-uv@v6
+
+    - name: install deps
+      run: uv sync --group wasm
+
+    - name: build wheels
+      run: uv run maturin build --release --target wasm32-unknown-emscripten --out dist -i 3.12
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "18"
+
+    - run: npm install
+
+    - run: npm run test
+
+    - run: |
+        ls -lh dist/
+        ls -l dist/
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: wasm_wheels
+        path: dist
