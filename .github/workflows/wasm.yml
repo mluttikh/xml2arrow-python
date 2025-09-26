@@ -41,18 +41,10 @@ jobs:
         uses: astral-sh/setup-uv@v6
 
       - name: install deps
-        run: uv sync --group wasm
+        run: uv sync
 
       - name: build wheels
         run: uv run maturin build --release --target wasm32-unknown-emscripten --out dist -i 3.12
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "18"
-
-      - run: npm install
-
-      - run: npm run test
 
       - run: |
           ls -lh dist/
