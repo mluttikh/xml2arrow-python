@@ -84,10 +84,10 @@ impl XmlToArrowParser {
     /// Returns:
     ///     dict: A dictionary where keys are table names (strings) and values are PyArrow RecordBatch objects.
     #[pyo3(signature = (source))]
-    pub fn parse(&self, source: FileOrFileLike) -> PyResult<PyObject> {
+    pub fn parse(&self, source: FileOrFileLike) -> PyResult<Py<PyAny>> {
         let reader = BufReader::new(source);
         let batches = parse_xml(reader, &self.config)?;
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let tables = PyDict::new(py);
             for (name, batch) in batches {
                 let py_batch = batch.to_pyarrow(py)?;
