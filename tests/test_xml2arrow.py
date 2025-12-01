@@ -163,8 +163,8 @@ def test_xml_to_arrow_yaml_parsing_error() -> None:
 
 def test_xml_to_arrow_parse_parse_error(parser: XmlToArrowParser) -> None:
     with pytest.raises(ParseError):
-        with tempfile.TemporaryFile(mode="w+") as f:
-            f.write(r"""
+        with tempfile.TemporaryFile(mode="w+b") as f:
+            f.write(rb"""
                 <report>
                     <monitoring_stations>
                         <monitoring_station>
@@ -216,3 +216,144 @@ def test_unsupported_conversion_error():
 
     config_path.unlink()
     xml_path.unlink()
+
+
+def test_empty_tables_are_created() -> None:
+    """Test that tables are created even when empty."""
+    # Create a config with multiple tables, some of which won't have matching
+    # XML elements
+    config_yaml = """
+        tables:
+        - name: metadata
+          xml_path: /
+          levels: []
+          fields:
+          - name: title
+            xml_path: /report/header/title
+            data_type: Utf8
+            nullable: false
+          - name: created_by
+            xml_path: /report/header/created_by
+            data_type: Utf8
+            nullable: false
+        - name: comments
+          xml_path: /report/header/comments
+          levels:
+          - comment
+          fields:
+          - name: text
+            xml_path: /report/header/comments/comment
+            data_type: Utf8
+            nullable: true
+        - name: items
+          xml_path: /report/data/items
+          levels:
+          - item
+          fields:
+          - name: id
+            xml_path: /report/data/items/item/@id
+            data_type: Utf8
+            nullable: false
+          - name: text
+            xml_path: /report/data/items/item
+            data_type: Utf8
+            nullable: false
+        - name: categories
+          xml_path: /report/header/categories
+          levels:
+          - category
+          fields:
+          - name: name
+            xml_path: /report/header/categories/category
+            data_type: Utf8
+            nullable: true
+        """
+
+    # XML that only contains data for some of the configured tables
+    xml_data = """
+        <report>
+            <header>
+                <title>Test Report</title>
+                <created_by>System</created_by>
+            </header>
+            <data>
+                <items>
+                    <item id="1">Value 1</item>
+                    <item id="2">Value 2</item>
+                </items>
+            </data>
+        </report>
+        """
+
+    config_path = Path("test_empty_config.yaml")
+    config_path.write_text(config_yaml)
+
+    xml_path = Path("test_empty_data.xml")
+    xml_path.write_text(xml_data)
+
+    try:
+        parser = XmlToArrowParser(config_path)
+        record_batches = parser.parse(xml_path)
+
+        # All tables should be present, even those with no matching XML
+        # elements
+        assert len(record_batches) == 4, (
+            "Expected 4 tables to be created (including empty ones)"
+        )
+
+        # Check that all table names are present
+        assert "metadata" in record_batches, "metadata table should exist"
+        assert "comments" in record_batches, (
+            "comments table should exist (even though empty)"
+        )
+        assert "items" in record_batches, "items table should exist"
+        assert "categories" in record_batches, (
+            "categories table should exist (even though empty)"
+        )
+
+        # Verify metadata table has 1 row
+        metadata_batch = record_batches["metadata"]
+        assert metadata_batch.num_rows == 1
+        assert metadata_batch.num_columns == 2  # title, created_by
+        metadata_dict = metadata_batch.to_pydict()
+        assert metadata_dict["title"] == ["Test Report"]
+        assert metadata_dict["created_by"] == ["System"]
+
+        # Verify comments table is empty but has correct schema
+        comments_batch = record_batches["comments"]
+        assert comments_batch.num_rows == 0, "comments table should have 0 rows"
+        assert comments_batch.num_columns == 2, (
+            "comments table should have 2 columns (index + text)"
+        )
+        assert comments_batch.schema == pa.schema(
+            [
+                pa.field("<comment>", pa.uint32(), nullable=False),
+                pa.field("text", pa.string(), nullable=True),
+            ]
+        )
+
+        # Verify items table has 2 rows
+        items_batch = record_batches["items"]
+        assert items_batch.num_rows == 2
+        assert items_batch.num_columns == 3  # index, id, text
+        items_dict = items_batch.to_pydict()
+        assert items_dict["<item>"] == [0, 1]
+        assert items_dict["id"] == ["1", "2"]
+        assert items_dict["text"] == ["Value 1", "Value 2"]
+
+        # Verify categories table is empty but has correct schema
+        categories_batch = record_batches["categories"]
+        assert categories_batch.num_rows == 0, "categories table should have 0 rows"
+        assert categories_batch.num_columns == 2, (
+            "categories table should have 2 columns (index + name)"
+        )
+        assert categories_batch.schema == pa.schema(
+            [
+                pa.field("<category>", pa.uint32(), nullable=False),
+                pa.field("name", pa.string(), nullable=True),
+            ]
+        )
+
+    finally:
+        config_path.unlink()
+        xml_path.unlink()
