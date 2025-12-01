@@ -225,7 +225,7 @@ def test_empty_tables_are_created() -> None:
     config_yaml = """
         tables:
         - name: metadata
-          xml_path: /report
+          xml_path: /
           levels: []
           fields:
           - name: title
