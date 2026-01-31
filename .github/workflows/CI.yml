@@ -19,6 +19,36 @@ permissions:
   contents: read
 
 jobs:
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.10', '3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install maturin
+        run: pip install maturin
+      - name: Build and install package
+        run: maturin develop
+      - name: Install test dependencies
+        run: pip install pytest pytest-cov
+      - name: Run tests with coverage
+        run: pytest tests/ -v --cov=xml2arrow --cov-report=xml --cov-report=term
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
   linux:
     runs-on: ${{ matrix.platform.runner }}
     strategy:
@@ -157,7 +187,7 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
-    needs: [linux, musllinux, windows, macos, sdist]
+    needs: [test, linux, musllinux, windows, macos, sdist]
     permissions:
       # Use to sign the release artifacts
       id-token: write
