@@ -27,11 +27,31 @@ dynamic = ["version"]
 dependencies = ["pyarrow>=14.0.0"]
 
 [project.optional-dependencies]
-test = ["pytest==8.3.4"]
+test = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/mluttikh/xml2arrow-python"
 "Bug Tracker" = "https://github.com/mluttikh/xml2arrow-python/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["python/xml2arrow"]
+omit = ["*/__pycache__/*", "*/tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
 
 [tool.maturin]
 name = "xml2arrow"
