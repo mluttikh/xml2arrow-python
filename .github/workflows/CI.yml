@@ -34,12 +34,12 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-      - name: Install maturin
-        run: pip install maturin
-      - name: Build and install package
-        run: maturin develop
-      - name: Install test dependencies
-        run: pip install pytest pytest-cov
+      - name: Install dependencies
+        run: pip install maturin pytest pytest-cov
+      - name: Build wheel
+        run: maturin build --release --out dist
+      - name: Install wheel
+        run: pip install --find-links=dist xml2arrow
       - name: Run tests with coverage
         run: pytest tests/ -v --cov=xml2arrow --cov-report=xml --cov-report=term
       - name: Upload coverage to Codecov
