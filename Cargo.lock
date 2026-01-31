@@ -1353,6 +1353,8 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 [[package]]
 name = "xml2arrow"
 version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c27a74ec809928d883dabeea219e6611a5526f8bd446fd3fd52ab2595565ca93"
 dependencies = [
  "arrow",
  "derive_more",
