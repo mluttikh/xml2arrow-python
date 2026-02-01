@@ -1,6 +1,7 @@
 """Tests for the xml2arrow package.
 
-This module contains tests for the XmlToArrowParser class and related functionality.
+This module contains tests for the XmlToArrowParser class and related
+functionality.
 """
 
 import tempfile
@@ -146,8 +147,8 @@ def test_xml_to_arrow_parser_file(
 ) -> None:
     """Test parsing XML from a file-like object.
 
-    Verifies that the parser can accept an open file handle
-    in addition to file paths.
+    Verifies that the parser can accept an open file handle in addition to
+    file paths.
     """
     xml_path = test_data_dir / "stations.xml"
     with open(xml_path, "r") as f:
@@ -170,8 +171,8 @@ def test_xml_to_arrow_parser_repr(stations_parser: XmlToArrowParser) -> None:
 def test_xml_to_arrow_yaml_parsing_error() -> None:
     """Test that an empty YAML config file raises YamlParsingError.
 
-    Verifies proper error handling when the configuration file
-    is empty or malformed.
+    Verifies proper error handling when the configuration file is empty or
+    malformed.
     """
     with pytest.raises(YamlParsingError):
         with tempfile.NamedTemporaryFile(mode="w+", suffix=".yaml") as f:
@@ -184,8 +185,8 @@ def test_xml_to_arrow_parse_parse_error(
 ) -> None:
     """Test that invalid data values raise ParseError.
 
-    Verifies that attempting to parse a non-numeric string
-    as a float raises the appropriate error.
+    Verifies that attempting to parse a non-numeric string as a float raises
+    the appropriate error.
     """
     with pytest.raises(ParseError):
         with tempfile.TemporaryFile(mode="w+b") as f:
