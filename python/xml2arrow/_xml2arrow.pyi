@@ -29,12 +29,13 @@ class XmlToArrowParser:
             source: The XML file to parse (path or file-like object).
 
         Returns:
-            A dictionary where keys are table names (strings) and values are PyArrow RecordBatch objects.
+            A dictionary where keys are table names (strings) and values are
+            PyArrow RecordBatch objects.
 
         Raises:
-            Xml2ArrowError: If an error occurs during XML parsing or Arrow table creation.
-                This can include errors such as invalid XML, incorrect configuration, or
-                unsupported data types.
+            Xml2ArrowError: If an error occurs during XML parsing or Arrow
+                table creation. This can include errors such as invalid XML,
+                incorrect configuration, or unsupported data types.
         """
 
     def __repr__(self) -> str: ...
