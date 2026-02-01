@@ -60,3 +60,29 @@ description = "Efficiently convert XML data to Apache Arrow format."
 requires-python = ">=3.10"
 python-source = "python"
 module-name = "xml2arrow._xml2arrow"
+
+[tool.ruff]
+# Target the minimum Python version supported by your project
+target-version = "py310"
+# Set the line length to a standard 88 (matches Black) or 100
+line-length = 100
+# Define the source directory for imports
+src = ["python"]
+
+[tool.ruff.lint]
+# Enable a broad set of rules
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort (import sorting)
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade (upgrades syntax to target-version)
+    "ARG",  # flake8-unused-arguments
+    "PT",   # flake8-pytest-style
+]
+
+[tool.ruff.lint.isort]
+# Ensure the internal module is recognized as first-party
+known-first-party = ["xml2arrow"]
