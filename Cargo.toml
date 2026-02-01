@@ -1,6 +1,6 @@
 [package]
 name = "_xml2arrow"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -9,8 +9,8 @@ name = "_xml2arrow"
 crate-type = ["cdylib"]
 
 [dependencies]
-xml2arrow = { version = "0.11.0", features = ["python"] }
-arrow = { version = "57.0.0", features = ["pyarrow"] }
+xml2arrow = { version = "0.12.0", features = ["python"] }
+arrow = { version = "57.1.0", features = ["pyarrow"] }
 pyo3-file = "0.14.0"
 
 [dependencies.pyo3]

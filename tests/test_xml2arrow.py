@@ -1,3 +1,8 @@
+"""Tests for the xml2arrow package.
+
+This module contains tests for the XmlToArrowParser class and related functionality.
+"""
+
 import tempfile
 from pathlib import Path
 
@@ -11,20 +16,19 @@ from xml2arrow.exceptions import (
 )
 
 
-@pytest.fixture(scope="module")
-def test_data_dir() -> Path:
-    return Path(__file__).parent / "test_data"
+def test_xml_to_arrow_parser(
+    stations_parser: XmlToArrowParser, test_data_dir: Path
+) -> None:
+    """Test the main XML to Arrow parsing workflow.
 
-
-@pytest.fixture(scope="module")
-def parser(test_data_dir: Path) -> XmlToArrowParser:
-    config_path = test_data_dir / "stations.yaml"
-    return XmlToArrowParser(config_path)
-
-
-def test_xml_to_arrow_parser(parser: XmlToArrowParser, test_data_dir: Path) -> None:
+    Verifies:
+    - All expected tables are created (report, stations, measurements)
+    - Data values match expected results
+    - Schema types are correct for all fields
+    - Index columns are properly generated for nested structures
+    """
     xml_path = test_data_dir / "stations.xml"
-    record_batches = parser.parse(xml_path)
+    record_batches = stations_parser.parse(xml_path)
 
     # Check if the correct tables are returned
     assert "report" in record_batches
@@ -138,33 +142,55 @@ def test_xml_to_arrow_parser(parser: XmlToArrowParser, test_data_dir: Path) -> N
 
 
 def test_xml_to_arrow_parser_file(
-    parser: XmlToArrowParser, test_data_dir: Path
+    stations_parser: XmlToArrowParser, test_data_dir: Path
 ) -> None:
+    """Test parsing XML from a file-like object.
+
+    Verifies that the parser can accept an open file handle
+    in addition to file paths.
+    """
     xml_path = test_data_dir / "stations.xml"
     with open(xml_path, "r") as f:
-        record_batches = parser.parse(f)
+        record_batches = stations_parser.parse(f)
     assert "report" in record_batches
     assert "stations" in record_batches
     assert "measurements" in record_batches
 
 
-def test_xml_to_arrow_parser_repr(parser: XmlToArrowParser) -> None:
-    repr_str = repr(parser)
+def test_xml_to_arrow_parser_repr(stations_parser: XmlToArrowParser) -> None:
+    """Test the string representation of XmlToArrowParser.
+
+    Verifies that __repr__ returns the expected format with the config path.
+    """
+    repr_str = repr(stations_parser)
     assert repr_str.startswith("XmlToArrowParser(config_path='")
     assert repr_str.endswith("stations.yaml')")
 
 
 def test_xml_to_arrow_yaml_parsing_error() -> None:
+    """Test that an empty YAML config file raises YamlParsingError.
+
+    Verifies proper error handling when the configuration file
+    is empty or malformed.
+    """
     with pytest.raises(YamlParsingError):
-        with tempfile.NamedTemporaryFile(mode="w+") as f:
+        with tempfile.NamedTemporaryFile(mode="w+", suffix=".yaml") as f:
             # Empty file
             XmlToArrowParser(f.name)
 
 
-def test_xml_to_arrow_parse_parse_error(parser: XmlToArrowParser) -> None:
+def test_xml_to_arrow_parse_parse_error(
+    stations_parser: XmlToArrowParser,
+) -> None:
+    """Test that invalid data values raise ParseError.
+
+    Verifies that attempting to parse a non-numeric string
+    as a float raises the appropriate error.
+    """
     with pytest.raises(ParseError):
         with tempfile.TemporaryFile(mode="w+b") as f:
-            f.write(rb"""
+            f.write(
+                rb"""
                 <report>
                     <monitoring_stations>
                         <monitoring_station>
@@ -174,186 +200,194 @@ def test_xml_to_arrow_parse_parse_error(parser: XmlToArrowParser) -> None:
                         </monitoring_station>
                     </monitoring_stations>
                 </report>
-            """)
+            """
+            )
             f.flush()  # Ensure data is written to the file
             f.seek(0)  # Reset the file pointer to the beginning
-            parser.parse(f)
+            stations_parser.parse(f)
 
 
-def test_unsupported_conversion_error():
+def test_unsupported_conversion_error(tmp_path: Path) -> None:
+    """Test that applying scale to non-float types raises UnsupportedConversionError.
+
+    Verifies that the scale option is only valid for Float32 and Float64 types,
+    and raises an appropriate error when used with integer types.
+    Note: The error is raised during config parsing, not XML parsing.
+    """
     config_yaml = """
-        tables:
-        - name: test_table
-          xml_path: /root
-          levels: []
-          fields:
-          - name: test_field
-            xml_path: /root/field
-            data_type: Int32
-            nullable: false
-            scale: 2.0
-        """
+tables:
+  - name: test_table
+    xml_path: /root
+    levels: []
+    fields:
+      - name: test_field
+        xml_path: /root/field
+        data_type: Int32
+        nullable: false
+        scale: 2.0
+"""
 
-    xml_data = """
-        <root>
-            <field>10</field>
-        </root>
-        """
-
-    config_path = Path("test_config.yaml")
+    config_path = tmp_path / "test_config.yaml"
     config_path.write_text(config_yaml)
 
-    xml_path = Path("test_data.xml")
-    xml_path.write_text(xml_data)
-
-    parser = XmlToArrowParser(config_path)
-
+    # The error is raised during config parsing (XmlToArrowParser instantiation)
     with pytest.raises(UnsupportedConversionError) as excinfo:
-        parser.parse(xml_path)
+        XmlToArrowParser(config_path)
 
     assert "Scaling is only supported for Float32 and Float64" in str(excinfo.value)
     assert "Int32" in str(excinfo.value)
 
-    config_path.unlink()
-    xml_path.unlink()
 
+def test_empty_tables_are_created(tmp_path: Path) -> None:
+    """Test that tables are created even when they have no matching XML elements.
 
-def test_empty_tables_are_created() -> None:
-    """Test that tables are created even when empty."""
+    Verifies that:
+    - All configured tables are present in the output
+    - Empty tables have the correct schema
+    - Tables with data are populated correctly
+    """
     # Create a config with multiple tables, some of which won't have matching
     # XML elements
     config_yaml = """
-        tables:
-        - name: metadata
-          xml_path: /
-          levels: []
-          fields:
-          - name: title
-            xml_path: /report/header/title
-            data_type: Utf8
-            nullable: false
-          - name: created_by
-            xml_path: /report/header/created_by
-            data_type: Utf8
-            nullable: false
-        - name: comments
-          xml_path: /report/header/comments
-          levels:
-          - comment
-          fields:
-          - name: text
-            xml_path: /report/header/comments/comment
-            data_type: Utf8
-            nullable: true
-        - name: items
-          xml_path: /report/data/items
-          levels:
-          - item
-          fields:
-          - name: id
-            xml_path: /report/data/items/item/@id
-            data_type: Utf8
-            nullable: false
-          - name: text
-            xml_path: /report/data/items/item
-            data_type: Utf8
-            nullable: false
-        - name: categories
-          xml_path: /report/header/categories
-          levels:
-          - category
-          fields:
-          - name: name
-            xml_path: /report/header/categories/category
-            data_type: Utf8
-            nullable: true
-        """
+tables:
+  - name: metadata
+    xml_path: /
+    levels: []
+    fields:
+      - name: title
+        xml_path: /report/header/title
+        data_type: Utf8
+        nullable: false
+      - name: created_by
+        xml_path: /report/header/created_by
+        data_type: Utf8
+        nullable: false
+  - name: comments
+    xml_path: /report/header/comments
+    levels:
+      - comment
+    fields:
+      - name: text
+        xml_path: /report/header/comments/comment
+        data_type: Utf8
+        nullable: true
+  - name: items
+    xml_path: /report/data/items
+    levels:
+      - item
+    fields:
+      - name: id
+        xml_path: /report/data/items/item/@id
+        data_type: Utf8
+        nullable: false
+      - name: text
+        xml_path: /report/data/items/item
+        data_type: Utf8
+        nullable: false
+  - name: categories
+    xml_path: /report/header/categories
+    levels:
+      - category
+    fields:
+      - name: name
+        xml_path: /report/header/categories/category
+        data_type: Utf8
+        nullable: true
+"""
 
     # XML that only contains data for some of the configured tables
     xml_data = """
-        <report>
-            <header>
-                <title>Test Report</title>
-                <created_by>System</created_by>
-            </header>
-            <data>
-                <items>
-                    <item id="1">Value 1</item>
-                    <item id="2">Value 2</item>
-                </items>
-            </data>
-        </report>
-        """
+<report>
+    <header>
+        <title>Test Report</title>
+        <created_by>System</created_by>
+    </header>
+    <data>
+        <items>
+            <item id="1">Value 1</item>
+            <item id="2">Value 2</item>
+        </items>
+    </data>
+</report>
+"""
 
-    config_path = Path("test_empty_config.yaml")
+    config_path = tmp_path / "test_empty_config.yaml"
     config_path.write_text(config_yaml)
 
-    xml_path = Path("test_empty_data.xml")
+    xml_path = tmp_path / "test_empty_data.xml"
     xml_path.write_text(xml_data)
 
-    try:
-        parser = XmlToArrowParser(config_path)
-        record_batches = parser.parse(xml_path)
+    parser = XmlToArrowParser(config_path)
+    record_batches = parser.parse(xml_path)
 
-        # All tables should be present, even those with no matching XML
-        # elements
-        assert len(record_batches) == 4, (
-            "Expected 4 tables to be created (including empty ones)"
-        )
+    # All tables should be present, even those with no matching XML elements
+    assert len(record_batches) == 4, (
+        "Expected 4 tables to be created (including empty ones)"
+    )
 
-        # Check that all table names are present
-        assert "metadata" in record_batches, "metadata table should exist"
-        assert "comments" in record_batches, (
-            "comments table should exist (even though empty)"
-        )
-        assert "items" in record_batches, "items table should exist"
-        assert "categories" in record_batches, (
-            "categories table should exist (even though empty)"
-        )
+    # Check that all table names are present
+    assert "metadata" in record_batches, "metadata table should exist"
+    assert "comments" in record_batches, (
+        "comments table should exist (even though empty)"
+    )
+    assert "items" in record_batches, "items table should exist"
+    assert "categories" in record_batches, (
+        "categories table should exist (even though empty)"
+    )
 
-        # Verify metadata table has 1 row
-        metadata_batch = record_batches["metadata"]
-        assert metadata_batch.num_rows == 1
-        assert metadata_batch.num_columns == 2  # title, created_by
-        metadata_dict = metadata_batch.to_pydict()
-        assert metadata_dict["title"] == ["Test Report"]
-        assert metadata_dict["created_by"] == ["System"]
+    # Verify metadata table has 1 row
+    metadata_batch = record_batches["metadata"]
+    assert metadata_batch.num_rows == 1
+    assert metadata_batch.num_columns == 2  # title, created_by
+    metadata_dict = metadata_batch.to_pydict()
+    assert metadata_dict["title"] == ["Test Report"]
+    assert metadata_dict["created_by"] == ["System"]
 
-        # Verify comments table is empty but has correct schema
-        comments_batch = record_batches["comments"]
-        assert comments_batch.num_rows == 0, "comments table should have 0 rows"
-        assert comments_batch.num_columns == 2, (
-            "comments table should have 2 columns (index + text)"
-        )
-        assert comments_batch.schema == pa.schema(
-            [
-                pa.field("<comment>", pa.uint32(), nullable=False),
-                pa.field("text", pa.string(), nullable=True),
-            ]
-        )
+    # Verify comments table is empty but has correct schema
+    comments_batch = record_batches["comments"]
+    assert comments_batch.num_rows == 0, "comments table should have 0 rows"
+    assert comments_batch.num_columns == 2, (
+        "comments table should have 2 columns (index + text)"
+    )
+    assert comments_batch.schema == pa.schema(
+        [
+            pa.field("<comment>", pa.uint32(), nullable=False),
+            pa.field("text", pa.string(), nullable=True),
+        ]
+    )
 
-        # Verify items table has 2 rows
-        items_batch = record_batches["items"]
-        assert items_batch.num_rows == 2
-        assert items_batch.num_columns == 3  # index, id, text
-        items_dict = items_batch.to_pydict()
-        assert items_dict["<item>"] == [0, 1]
-        assert items_dict["id"] == ["1", "2"]
-        assert items_dict["text"] == ["Value 1", "Value 2"]
+    # Verify items table has 2 rows
+    items_batch = record_batches["items"]
+    assert items_batch.num_rows == 2
+    assert items_batch.num_columns == 3  # index, id, text
+    items_dict = items_batch.to_pydict()
+    assert items_dict["<item>"] == [0, 1]
+    assert items_dict["id"] == ["1", "2"]
+    assert items_dict["text"] == ["Value 1", "Value 2"]
 
-        # Verify categories table is empty but has correct schema
-        categories_batch = record_batches["categories"]
-        assert categories_batch.num_rows == 0, "categories table should have 0 rows"
-        assert categories_batch.num_columns == 2, (
-            "categories table should have 2 columns (index + name)"
-        )
-        assert categories_batch.schema == pa.schema(
-            [
-                pa.field("<category>", pa.uint32(), nullable=False),
-                pa.field("name", pa.string(), nullable=True),
-            ]
-        )
+    # Verify categories table is empty but has correct schema
+    categories_batch = record_batches["categories"]
+    assert categories_batch.num_rows == 0, "categories table should have 0 rows"
+    assert categories_batch.num_columns == 2, (
+        "categories table should have 2 columns (index + name)"
+    )
+    assert categories_batch.schema == pa.schema(
+        [
+            pa.field("<category>", pa.uint32(), nullable=False),
+            pa.field("name", pa.string(), nullable=True),
+        ]
+    )
 
-    finally:
-        config_path.unlink()
-        xml_path.unlink()
+
+def test_version_returns_string() -> None:
+    """Test that the package version is a non-empty string.
+
+    Verifies that _get_version() returns a valid version string.
+    """
+    from xml2arrow import __version__
+
+    assert isinstance(__version__, str)
+    assert len(__version__) > 0
+    # Version should follow semver pattern (at least major.minor.patch)
+    parts = __version__.split(".")
+    assert len(parts) >= 3, f"Version {__version__} should have at least 3 parts"
