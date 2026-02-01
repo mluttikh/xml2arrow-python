@@ -12,7 +12,7 @@ class XmlToArrowParser:
             may be raised as subclasses of this base exception.
     """
 
-    def __init__(self, source: str | PathLike) -> None:
+    def __init__(self, config_path: str | PathLike) -> None:
         """Initializes the parser with a configuration file path.
 
         Args:
