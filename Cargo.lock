@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "_xml2arrow"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "arrow",
  "pyo3",
@@ -1352,9 +1352,7 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "xml2arrow"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fc4240a4f70344f15d6aeb6174cb2724639028cbe1eef8f109c46cf18691192"
+version = "0.14.0"
 dependencies = [
  "arrow",
  "derive_more",
