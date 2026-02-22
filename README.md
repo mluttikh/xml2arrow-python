@@ -51,8 +51,10 @@ tables:
                                # (e.g. /library/book/@id)
         data_type: <type>      # Arrow data type — see supported types below
         nullable: <true|false> # Whether the field can be null (default: false)
+                               # If false, missing/empty tags cause a ParseError.
         scale: <number>        # Multiply float values by this factor (optional)
         offset: <number>       # Add this value to float values after scaling (optional)
+                               # value = (value * scale) + offset
 ```
 
 **Supported data types:** `Boolean`, `Int8`, `UInt8`, `Int16`, `UInt16`, `Int32`,
@@ -67,6 +69,10 @@ When your XML has a parent–child relationship between tables, `levels` creates
 index columns that link child rows back to their parent rows. Each string in the
 list names an element at a nesting boundary above the row element, and generates a
 zero-based `uint32` column named `<level>` in the output.
+
+*Note: If a table is defined purely to establish a structural hierarchy (i.e., it
+has levels defined but an empty fields list), it acts only as a boundary and will
+be excluded from the final output map.*
 
 For example, given stations that each have multiple measurements:
 
@@ -98,7 +104,7 @@ the `measurements` table back to the `stations` table on `<station>`.
 ### 3. Parse the XML
 
 ```python
-import pyarrow as pa
+import polars as pl
 from xml2arrow import XmlToArrowParser
 
 parser = XmlToArrowParser("config.yaml")
@@ -107,15 +113,15 @@ record_batches = parser.parse("data.xml")  # also accepts pathlib.Path or any fi
 # Access a table by name
 batch = record_batches["measurements"]     # pyarrow.RecordBatch
 
-# Convert to a PyArrow Table
-table = pa.Table.from_batches([batch])
-
 # Convert to a pandas DataFrame
 df = batch.to_pandas()
 
 # Convert to a Polars DataFrame
-import polars as pl
 df = pl.from_arrow(batch)
+
+# Convert to a PyArrow Table
+import pyarrow as pa
+table = pa.Table.from_batches([batch])
 ```
 
 `parse()` returns a `dict[str, pyarrow.RecordBatch]` whose keys are the table
@@ -271,20 +277,21 @@ tables:
 ### Parsing and using the output
 
 ```python
+import polars as pl
 from xml2arrow import XmlToArrowParser
 
 parser = XmlToArrowParser("stations.yaml")
 record_batches = parser.parse("stations.xml")
 
-stations_df = record_batches["stations"].to_pandas()
-measurements_df = record_batches["measurements"].to_pandas()
+stations_df = pl.from_arrow(record_batches["stations"])
+measurements_df = pl.from_arrow(record_batches["measurements"])
 
 # Join measurements back to their parent station using the <station> index
-merged = measurements_df.merge(
-    stations_df[["<station>", "id"]],
+merged = measurements_df.join(
+    stations_df.select(["<station>", "id"]),
     on="<station>",
 )
-print(merged[["id", "timestamp", "temperature", "pressure"]])
+print(merged.select(["id", "timestamp", "temperature", "pressure"]))
 ```
 
 ### Output
