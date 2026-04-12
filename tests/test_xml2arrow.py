@@ -12,6 +12,7 @@ from xml2arrow import XmlToArrowParser
 from xml2arrow.exceptions import (
     ParseError,
     UnsupportedConversionError,
+    XmlParsingError,
     YamlParsingError,
 )
 
@@ -941,6 +942,67 @@ def test_bookstore_namespaced_xml(test_data_dir: Path) -> None:
         "It was okay — nothing special.",  # em dash
     ]
     assert reviews.schema.field("rating").type == pa.uint8()
+
+
+@pytest.mark.parametrize(
+    "xml_data, expected_fragment",
+    [
+        # Unclosed tag
+        ("<root><item>text</root>", "item"),
+        # Mismatched closing tag
+        ("<root><item>text</other></root>", "item"),
+    ],
+    ids=["unclosed-tag", "mismatched-tag"],
+)
+def test_malformed_xml_raises(tmp_path: Path, xml_data: str, expected_fragment: str) -> None:
+    """Test that structurally invalid XML raises XmlParsingError with context."""
+    config_yaml = """
+tables:
+  - name: test_table
+    xml_path: /root
+    levels: []
+    fields:
+      - name: value
+        xml_path: /root/item
+        data_type: Utf8
+        nullable: true
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    xml_path = tmp_path / "data.xml"
+    xml_path.write_text(xml_data)
+
+    parser = XmlToArrowParser(config_path)
+    with pytest.raises(XmlParsingError) as excinfo:
+        parser.parse(xml_path)
+
+    assert expected_fragment in str(excinfo.value)
+
+
+def test_non_xml_input_produces_empty_result(tmp_path: Path) -> None:
+    """Test that completely non-XML input is handled gracefully with an empty result."""
+    config_yaml = """
+tables:
+  - name: test_table
+    xml_path: /root
+    levels: []
+    fields:
+      - name: value
+        xml_path: /root/item
+        data_type: Utf8
+        nullable: true
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    xml_path = tmp_path / "data.xml"
+    xml_path.write_text("<<<not xml at all>>>")
+
+    parser = XmlToArrowParser(config_path)
+    result = parser.parse(xml_path)
+
+    assert result["test_table"].num_rows == 0
 
 
 def test_version_returns_string() -> None:
