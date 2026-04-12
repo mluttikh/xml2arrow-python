@@ -157,14 +157,16 @@ def test_xml_to_arrow_parser_file(
     assert "measurements" in record_batches
 
 
-def test_xml_to_arrow_parser_repr(stations_parser: XmlToArrowParser) -> None:
+def test_xml_to_arrow_parser_repr(
+    stations_parser: XmlToArrowParser, test_data_dir: Path
+) -> None:
     """Test the string representation of XmlToArrowParser.
 
-    Verifies that __repr__ returns the expected format with the config path.
+    Verifies that __repr__ returns the exact expected format with the full config path.
     """
     repr_str = repr(stations_parser)
-    assert repr_str.startswith("XmlToArrowParser(config_path='")
-    assert repr_str.endswith("stations.yaml')")
+    expected_path = str(test_data_dir / "stations.yaml")
+    assert repr_str == f"XmlToArrowParser(config_path='{expected_path}')"
 
 
 def test_xml_to_arrow_yaml_parsing_error() -> None:
