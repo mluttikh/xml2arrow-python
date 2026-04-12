@@ -173,10 +173,11 @@ def test_xml_to_arrow_yaml_parsing_error() -> None:
     Verifies proper error handling when the configuration file
     is empty or malformed.
     """
-    with pytest.raises(YamlParsingError):
+    with pytest.raises(YamlParsingError) as excinfo:
         with tempfile.NamedTemporaryFile(mode="w+", suffix=".yaml") as f:
             # Empty file
             XmlToArrowParser(f.name)
+    assert "missing field" in str(excinfo.value).lower() or "tables" in str(excinfo.value)
 
 
 def test_xml_to_arrow_parse_parse_error(
@@ -185,9 +186,10 @@ def test_xml_to_arrow_parse_parse_error(
     """Test that invalid data values raise ParseError.
 
     Verifies that attempting to parse a non-numeric string
-    as a float raises the appropriate error.
+    as a float raises the appropriate error, with the field name,
+    invalid value, and target type in the message.
     """
-    with pytest.raises(ParseError):
+    with pytest.raises(ParseError) as excinfo:
         with tempfile.TemporaryFile(mode="w+b") as f:
             f.write(
                 rb"""
@@ -205,6 +207,66 @@ def test_xml_to_arrow_parse_parse_error(
             f.flush()  # Ensure data is written to the file
             f.seek(0)  # Reset the file pointer to the beginning
             stations_parser.parse(f)
+    msg = str(excinfo.value)
+    assert "not float" in msg
+    assert "latitude" in msg
+
+
+def test_parse_error_boolean(tmp_path: Path) -> None:
+    """Test that an invalid boolean value includes the value and field name in the error."""
+    config_yaml = """
+tables:
+  - name: test_table
+    xml_path: /root
+    levels: []
+    fields:
+      - name: flag
+        xml_path: /root/item/flag
+        data_type: Boolean
+        nullable: false
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    xml_path = tmp_path / "data.xml"
+    xml_path.write_text("<root><item><flag>maybe</flag></item></root>")
+
+    parser = XmlToArrowParser(config_path)
+    with pytest.raises(ParseError) as excinfo:
+        parser.parse(xml_path)
+
+    msg = str(excinfo.value)
+    assert "maybe" in msg
+    assert "flag" in msg
+    assert "boolean" in msg.lower()
+
+
+def test_parse_error_missing_non_nullable(tmp_path: Path) -> None:
+    """Test that a missing non-nullable field produces an error with the field name and path."""
+    config_yaml = """
+tables:
+  - name: test_table
+    xml_path: /root
+    levels: []
+    fields:
+      - name: count
+        xml_path: /root/item/count
+        data_type: Int32
+        nullable: false
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    xml_path = tmp_path / "data.xml"
+    xml_path.write_text("<root><item></item></root>")
+
+    parser = XmlToArrowParser(config_path)
+    with pytest.raises(ParseError) as excinfo:
+        parser.parse(xml_path)
+
+    msg = str(excinfo.value)
+    assert "count" in msg
+    assert "Missing value" in msg or "missing" in msg.lower()
 
 
 def test_unsupported_conversion_error(tmp_path: Path) -> None:
@@ -236,6 +298,32 @@ tables:
 
     assert "Scaling is only supported for Float32 and Float64" in str(excinfo.value)
     assert "Int32" in str(excinfo.value)
+
+
+def test_unsupported_conversion_error_offset(tmp_path: Path) -> None:
+    """Test that applying offset to non-float types raises UnsupportedConversionError."""
+    config_yaml = """
+tables:
+  - name: test_table
+    xml_path: /root
+    levels: []
+    fields:
+      - name: test_field
+        xml_path: /root/field
+        data_type: Utf8
+        nullable: false
+        offset: 1.0
+"""
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    with pytest.raises(UnsupportedConversionError) as excinfo:
+        XmlToArrowParser(config_path)
+
+    msg = str(excinfo.value)
+    assert "Offset is only supported for Float32 and Float64" in msg
+    assert "Utf8" in msg
 
 
 def test_empty_tables_are_created(tmp_path: Path) -> None:
