@@ -379,6 +379,133 @@ tables:
     )
 
 
+@pytest.mark.parametrize(
+    "data_type, xml_value, expected_value, arrow_type",
+    [
+        ("Boolean", "true", True, pa.bool_()),
+        ("Boolean", "false", False, pa.bool_()),
+        ("Boolean", "1", True, pa.bool_()),
+        ("Boolean", "0", False, pa.bool_()),
+        ("Boolean", "yes", True, pa.bool_()),
+        ("Boolean", "no", False, pa.bool_()),
+        ("Int8", "127", 127, pa.int8()),
+        ("Int8", "-128", -128, pa.int8()),
+        ("UInt8", "255", 255, pa.uint8()),
+        ("UInt8", "0", 0, pa.uint8()),
+        ("Int16", "32767", 32767, pa.int16()),
+        ("Int16", "-32768", -32768, pa.int16()),
+        ("UInt16", "65535", 65535, pa.uint16()),
+        ("UInt16", "0", 0, pa.uint16()),
+        ("Int32", "2147483647", 2147483647, pa.int32()),
+        ("Int32", "-2147483648", -2147483648, pa.int32()),
+        ("UInt32", "4294967295", 4294967295, pa.uint32()),
+        ("UInt32", "0", 0, pa.uint32()),
+        ("Int64", "9223372036854775807", 9223372036854775807, pa.int64()),
+        ("Int64", "-9223372036854775808", -9223372036854775808, pa.int64()),
+        ("UInt64", "18446744073709551615", 18446744073709551615, pa.uint64()),
+        ("UInt64", "0", 0, pa.uint64()),
+        ("Float32", "3.14", pytest.approx(3.14, rel=1e-5), pa.float32()),
+        ("Float32", "-0.0", pytest.approx(0.0), pa.float32()),
+        ("Float64", "3.141592653589793", pytest.approx(3.141592653589793), pa.float64()),
+        ("Float64", "-1.7e308", pytest.approx(-1.7e308), pa.float64()),
+        ("Utf8", "hello world", "hello world", pa.string()),
+        ("Utf8", "", "", pa.string()),
+    ],
+    ids=lambda val: str(val) if not isinstance(val, pa.DataType) else "",
+)
+def test_data_type_parsing(
+    tmp_path: Path,
+    data_type: str,
+    xml_value: str,
+    expected_value: object,
+    arrow_type: pa.DataType,
+) -> None:
+    """Test that all supported data types are correctly parsed and produce the right Arrow type."""
+    config_yaml = f"""
+tables:
+  - name: test_table
+    xml_path: /root
+    levels: []
+    fields:
+      - name: value
+        xml_path: /root/item/value
+        data_type: {data_type}
+        nullable: false
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    xml_data = f"<root><item><value>{xml_value}</value></item></root>"
+    xml_path = tmp_path / "data.xml"
+    xml_path.write_text(xml_data)
+
+    parser = XmlToArrowParser(config_path)
+    result = parser.parse(xml_path)
+
+    batch = result["test_table"]
+    assert batch.num_rows == 1
+    assert batch.schema.field("value").type == arrow_type
+    assert batch.to_pydict()["value"][0] == expected_value
+
+
+@pytest.mark.parametrize(
+    "data_type, xml_value, arrow_type",
+    [
+        ("Boolean", "true", pa.bool_()),
+        ("Int8", "42", pa.int8()),
+        ("UInt8", "42", pa.uint8()),
+        ("Int16", "42", pa.int16()),
+        ("UInt16", "42", pa.uint16()),
+        ("Int32", "42", pa.int32()),
+        ("UInt32", "42", pa.uint32()),
+        ("Int64", "42", pa.int64()),
+        ("UInt64", "42", pa.uint64()),
+        ("Float32", "3.14", pa.float32()),
+        ("Float64", "3.14", pa.float64()),
+        ("Utf8", "hello", pa.string()),
+    ],
+)
+def test_data_type_nullable(
+    tmp_path: Path,
+    data_type: str,
+    xml_value: str,
+    arrow_type: pa.DataType,
+) -> None:
+    """Test that nullable fields produce null when the element is missing."""
+    config_yaml = f"""
+tables:
+  - name: test_table
+    xml_path: /root
+    levels: []
+    fields:
+      - name: value
+        xml_path: /root/item/value
+        data_type: {data_type}
+        nullable: true
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    # Two rows: one with value, one without
+    xml_data = f"""<root>
+        <item><value>{xml_value}</value></item>
+        <item></item>
+    </root>"""
+    xml_path = tmp_path / "data.xml"
+    xml_path.write_text(xml_data)
+
+    parser = XmlToArrowParser(config_path)
+    result = parser.parse(xml_path)
+
+    batch = result["test_table"]
+    assert batch.num_rows == 2
+    assert batch.schema.field("value").type == arrow_type
+    assert batch.schema.field("value").nullable is True
+    values = batch.to_pydict()["value"]
+    assert values[0] is not None
+    assert values[1] is None
+
+
 def test_version_returns_string() -> None:
     """Test that the package version is a non-empty string.
 
