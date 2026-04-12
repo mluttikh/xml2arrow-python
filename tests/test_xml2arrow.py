@@ -171,11 +171,10 @@ def test_xml_to_arrow_yaml_parsing_error() -> None:
     Verifies proper error handling when the configuration file
     is empty or malformed.
     """
-    with pytest.raises(YamlParsingError) as excinfo:
+    with pytest.raises(YamlParsingError, match=r"(?i)missing field|tables"):
         with tempfile.NamedTemporaryFile(mode="w+", suffix=".yaml") as f:
             # Empty file
             XmlToArrowParser(f.name)
-    assert "missing field" in str(excinfo.value).lower() or "tables" in str(excinfo.value)
 
 
 def test_xml_to_arrow_parse_parse_error(
@@ -203,11 +202,8 @@ def test_xml_to_arrow_parse_parse_error(
         )
         f.flush()
         f.seek(0)
-        with pytest.raises(ParseError) as excinfo:
+        with pytest.raises(ParseError, match=r"not float.*latitude|latitude.*not float"):
             stations_parser.parse(f)
-    msg = str(excinfo.value)
-    assert "not float" in msg
-    assert "latitude" in msg
 
 
 def test_parse_error_boolean(tmp_path: Path) -> None:
@@ -230,13 +226,8 @@ tables:
     xml_path.write_text("<root><item><flag>maybe</flag></item></root>")
 
     parser = XmlToArrowParser(config_path)
-    with pytest.raises(ParseError) as excinfo:
+    with pytest.raises(ParseError, match=r"(?i)maybe.*flag.*boolean|maybe.*boolean.*flag"):
         parser.parse(xml_path)
-
-    msg = str(excinfo.value)
-    assert "maybe" in msg
-    assert "flag" in msg
-    assert "boolean" in msg.lower()
 
 
 def test_parse_error_missing_non_nullable(tmp_path: Path) -> None:
@@ -259,12 +250,8 @@ tables:
     xml_path.write_text("<root><item></item></root>")
 
     parser = XmlToArrowParser(config_path)
-    with pytest.raises(ParseError) as excinfo:
+    with pytest.raises(ParseError, match=r"(?i)missing.*count|count.*missing"):
         parser.parse(xml_path)
-
-    msg = str(excinfo.value)
-    assert "count" in msg
-    assert "Missing value" in msg or "missing" in msg.lower()
 
 
 def test_unsupported_conversion_error(tmp_path: Path) -> None:
@@ -291,11 +278,11 @@ tables:
     config_path.write_text(config_yaml)
 
     # The error is raised during config parsing (XmlToArrowParser instantiation)
-    with pytest.raises(UnsupportedConversionError) as excinfo:
+    with pytest.raises(
+        UnsupportedConversionError,
+        match=r"Scaling is only supported for Float32 and Float64.*Int32",
+    ):
         XmlToArrowParser(config_path)
-
-    assert "Scaling is only supported for Float32 and Float64" in str(excinfo.value)
-    assert "Int32" in str(excinfo.value)
 
 
 def test_unsupported_conversion_error_offset(tmp_path: Path) -> None:
@@ -316,12 +303,11 @@ tables:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(config_yaml)
 
-    with pytest.raises(UnsupportedConversionError) as excinfo:
+    with pytest.raises(
+        UnsupportedConversionError,
+        match=r"Offset is only supported for Float32 and Float64.*Utf8",
+    ):
         XmlToArrowParser(config_path)
-
-    msg = str(excinfo.value)
-    assert "Offset is only supported for Float32 and Float64" in msg
-    assert "Utf8" in msg
 
 
 def test_empty_tables_are_created(tmp_path: Path) -> None:
@@ -963,10 +949,8 @@ tables:
     xml_path.write_text(xml_data)
 
     parser = XmlToArrowParser(config_path)
-    with pytest.raises(XmlParsingError) as excinfo:
+    with pytest.raises(XmlParsingError, match=expected_fragment):
         parser.parse(xml_path)
-
-    assert expected_fragment in str(excinfo.value)
 
 
 def test_non_xml_input_produces_empty_result(tmp_path: Path) -> None:
