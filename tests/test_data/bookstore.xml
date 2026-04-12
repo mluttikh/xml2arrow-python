@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A bookstore catalog with namespaces, mixed content patterns, and edge cases -->
+<bk:catalog xmlns:bk="http://example.com/books" xmlns:rv="http://example.com/reviews">
+  <bk:meta>
+    <bk:store-name>The Great Bookshop</bk:store-name>
+    <bk:currency>EUR</bk:currency>
+  </bk:meta>
+  <bk:books>
+    <bk:book id="B001" in-stock="true">
+      <bk:title>The Art of Programming</bk:title>
+      <bk:author>Jane O'Connor &amp; Bob "The Coder" Smith</bk:author>
+      <bk:price>29.99</bk:price>
+      <bk:pages>384</bk:pages>
+      <bk:tags>
+        <bk:tag>programming</bk:tag>
+        <bk:tag>computer science</bk:tag>
+      </bk:tags>
+      <rv:reviews>
+        <rv:review rating="5">
+          <rv:reviewer>Alice</rv:reviewer>
+          <rv:text><![CDATA[Excellent book! <must-read> for all developers.]]></rv:text>
+        </rv:review>
+        <rv:review rating="4">
+          <rv:reviewer>Bob</rv:reviewer>
+          <rv:text>Good but could use more examples.</rv:text>
+        </rv:review>
+      </rv:reviews>
+    </bk:book>
+    <bk:book id="B002" in-stock="false">
+      <bk:title>Data &amp; Algorithms</bk:title>
+      <bk:author>María García-López</bk:author>
+      <bk:price>45.50</bk:price>
+      <bk:pages>612</bk:pages>
+      <bk:tags>
+        <bk:tag>algorithms</bk:tag>
+      </bk:tags>
+      <!-- No reviews yet -->
+    </bk:book>
+    <bk:book id="B003" in-stock="true">
+      <bk:title>Empty Spaces: A Meditation</bk:title>
+      <bk:author>田中太郎</bk:author>
+      <bk:price>15.00</bk:price>
+      <bk:pages>128</bk:pages>
+      <bk:tags/>
+      <rv:reviews>
+        <rv:review rating="3">
+          <rv:reviewer>Charlie</rv:reviewer>
+          <rv:text>It was okay — nothing special.</rv:text>
+        </rv:review>
+      </rv:reviews>
+    </bk:book>
+  </bk:books>
+</bk:catalog>
