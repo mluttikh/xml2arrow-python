@@ -594,6 +594,276 @@ tables:
     assert values[1] is None
 
 
+def test_unicode_in_elements_and_attributes(tmp_path: Path) -> None:
+    """Test that non-ASCII text in elements and attributes is preserved."""
+    config_yaml = """
+tables:
+  - name: test_table
+    xml_path: /root
+    levels: []
+    fields:
+      - name: label
+        xml_path: /root/item/@label
+        data_type: Utf8
+        nullable: false
+      - name: value
+        xml_path: /root/item/value
+        data_type: Utf8
+        nullable: false
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    xml_data = '<root><item label="日本語ラベル"><value>Ünïcödé — «données» 中文 🌍</value></item></root>'
+    xml_path = tmp_path / "data.xml"
+    xml_path.write_text(xml_data, encoding="utf-8")
+
+    parser = XmlToArrowParser(config_path)
+    result = parser.parse(xml_path)
+
+    batch = result["test_table"]
+    assert batch.num_rows == 1
+    assert batch.to_pydict()["label"] == ["日本語ラベル"]
+    assert batch.to_pydict()["value"] == ["Ünïcödé — «données» 中文 🌍"]
+
+
+def test_xml_with_bom(tmp_path: Path) -> None:
+    """Test that XML files with a UTF-8 BOM are parsed correctly."""
+    config_yaml = """
+tables:
+  - name: test_table
+    xml_path: /root
+    levels: []
+    fields:
+      - name: value
+        xml_path: /root/item
+        data_type: Utf8
+        nullable: false
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    xml_path = tmp_path / "data.xml"
+    # Write UTF-8 BOM (\xef\xbb\xbf) followed by XML content
+    xml_path.write_bytes(b"\xef\xbb\xbf<root><item>hello</item></root>")
+
+    parser = XmlToArrowParser(config_path)
+    result = parser.parse(xml_path)
+
+    batch = result["test_table"]
+    assert batch.num_rows == 1
+    assert batch.to_pydict()["value"] == ["hello"]
+
+
+def test_large_attribute_value(tmp_path: Path) -> None:
+    """Test that very large attribute values are not truncated."""
+    config_yaml = """
+tables:
+  - name: test_table
+    xml_path: /root
+    levels: []
+    fields:
+      - name: data
+        xml_path: /root/item/@data
+        data_type: Utf8
+        nullable: false
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    large_value = "x" * 100_000
+    xml_data = f'<root><item data="{large_value}"/></root>'
+    xml_path = tmp_path / "data.xml"
+    xml_path.write_text(xml_data)
+
+    parser = XmlToArrowParser(config_path)
+    result = parser.parse(xml_path)
+
+    batch = result["test_table"]
+    assert batch.num_rows == 1
+    assert batch.to_pydict()["data"] == [large_value]
+
+
+def test_xml_with_entities_and_cdata(tmp_path: Path) -> None:
+    """Test that XML entities and CDATA sections are handled correctly."""
+    config_yaml = """
+tables:
+  - name: test_table
+    xml_path: /root
+    levels: []
+    fields:
+      - name: entity_text
+        xml_path: /root/item/entity_text
+        data_type: Utf8
+        nullable: false
+      - name: cdata_text
+        xml_path: /root/item/cdata_text
+        data_type: Utf8
+        nullable: false
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    xml_data = """<root><item>
+        <entity_text>&lt;div&gt; &amp; &quot;test&quot;</entity_text>
+        <cdata_text><![CDATA[<raw> & "unescaped"]]></cdata_text>
+    </item></root>"""
+    xml_path = tmp_path / "data.xml"
+    xml_path.write_text(xml_data)
+
+    parser = XmlToArrowParser(config_path)
+    result = parser.parse(xml_path)
+
+    batch = result["test_table"]
+    assert batch.num_rows == 1
+    assert batch.to_pydict()["entity_text"] == ['<div> & "test"']
+    assert batch.to_pydict()["cdata_text"] == ['<raw> & "unescaped"']
+
+
+def test_stop_at_paths(tmp_path: Path) -> None:
+    """Test that stop_at_paths stops parsing early and ignores later data."""
+    config_yaml = """
+parser_options:
+  stop_at_paths:
+    - /report/header
+tables:
+  - name: header
+    xml_path: /report
+    levels: [header]
+    fields:
+      - name: title
+        xml_path: /report/header/title
+        data_type: Utf8
+        nullable: false
+  - name: items
+    xml_path: /report/data
+    levels:
+      - item
+    fields:
+      - name: value
+        xml_path: /report/data/item/value
+        data_type: Utf8
+        nullable: false
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    xml_data = """<report>
+        <header><title>Report Title</title></header>
+        <data>
+            <item><value>should not appear</value></item>
+        </data>
+    </report>"""
+    xml_path = tmp_path / "data.xml"
+    xml_path.write_text(xml_data)
+
+    parser = XmlToArrowParser(config_path)
+    result = parser.parse(xml_path)
+
+    # Header should be parsed
+    header_batch = result["header"]
+    assert header_batch.num_rows == 1
+    assert header_batch.to_pydict()["title"] == ["Report Title"]
+
+    # Items should be empty because parsing stopped at /report/header
+    items_batch = result["items"]
+    assert items_batch.num_rows == 0
+
+
+def test_parser_reuse_across_files(tmp_path: Path) -> None:
+    """Test that a single parser instance can parse multiple XML files."""
+    config_yaml = """
+tables:
+  - name: test_table
+    xml_path: /root
+    levels: []
+    fields:
+      - name: value
+        xml_path: /root/item
+        data_type: Int32
+        nullable: false
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    parser = XmlToArrowParser(config_path)
+
+    for i in range(3):
+        xml_path = tmp_path / f"data_{i}.xml"
+        xml_path.write_text(f"<root><item>{i * 10}</item></root>")
+        result = parser.parse(xml_path)
+        batch = result["test_table"]
+        assert batch.num_rows == 1
+        assert batch.to_pydict()["value"] == [i * 10]
+
+
+def test_concurrent_parser_reuse(tmp_path: Path) -> None:
+    """Test that a parser can be used from multiple threads concurrently."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    config_yaml = """
+tables:
+  - name: test_table
+    xml_path: /root
+    levels: []
+    fields:
+      - name: value
+        xml_path: /root/item
+        data_type: Int32
+        nullable: false
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    # Create XML files before spawning threads
+    xml_paths = []
+    for i in range(10):
+        xml_path = tmp_path / f"data_{i}.xml"
+        xml_path.write_text(f"<root><item>{i}</item></root>")
+        xml_paths.append((xml_path, i))
+
+    parser = XmlToArrowParser(config_path)
+
+    def parse_file(args: tuple) -> int:
+        path, expected = args
+        result = parser.parse(path)
+        return result["test_table"].to_pydict()["value"][0]
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(parse_file, xml_paths))
+
+    assert results == list(range(10))
+
+
+def test_pathlib_path_input(tmp_path: Path) -> None:
+    """Test that pathlib.Path objects are accepted for both config and XML input."""
+    config_yaml = """
+tables:
+  - name: test_table
+    xml_path: /root
+    levels: []
+    fields:
+      - name: value
+        xml_path: /root/item
+        data_type: Utf8
+        nullable: false
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    xml_path = tmp_path / "data.xml"
+    xml_path.write_text("<root><item>test</item></root>")
+
+    # Both config_path and xml_path are pathlib.Path objects
+    assert isinstance(config_path, Path)
+    assert isinstance(xml_path, Path)
+
+    parser = XmlToArrowParser(config_path)
+    result = parser.parse(xml_path)
+
+    assert result["test_table"].to_pydict()["value"] == ["test"]
+
+
 def test_version_returns_string() -> None:
     """Test that the package version is a non-empty string.
 
