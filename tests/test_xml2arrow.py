@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pytest
+
 from xml2arrow import XmlToArrowParser
 from xml2arrow.exceptions import (
     ParseError,
@@ -17,9 +18,7 @@ from xml2arrow.exceptions import (
 )
 
 
-def test_xml_to_arrow_parser(
-    stations_parser: XmlToArrowParser, test_data_dir: Path
-) -> None:
+def test_xml_to_arrow_parser(stations_parser: XmlToArrowParser, test_data_dir: Path) -> None:
     """Test the main XML to Arrow parsing workflow.
 
     Verifies:
@@ -109,7 +108,7 @@ def test_xml_to_arrow_parser(
     for key in ["<station>", "id", "description", "install_date"]:
         assert stations[key] == expected_stations[key]
     for key in ["latitude", "longitude", "elevation"]:
-        for elem, exp_elem in zip(stations[key], expected_stations[key]):
+        for elem, exp_elem in zip(stations[key], expected_stations[key], strict=False):
             assert pytest.approx(elem) == exp_elem
     assert stations_batch.schema == pa.schema(
         [
@@ -128,7 +127,7 @@ def test_xml_to_arrow_parser(
     for key in ["<station>", "<measurement>", "timestamp"]:
         assert measurements[key] == expected_measurements[key]
     for key in ["temperature", "pressure", "humidity"]:
-        for elem, exp_elem in zip(measurements[key], expected_measurements[key]):
+        for elem, exp_elem in zip(measurements[key], expected_measurements[key], strict=False):
             assert pytest.approx(elem) == exp_elem
     assert measurements_batch.schema == pa.schema(
         [
@@ -142,25 +141,21 @@ def test_xml_to_arrow_parser(
     )
 
 
-def test_xml_to_arrow_parser_file(
-    stations_parser: XmlToArrowParser, test_data_dir: Path
-) -> None:
+def test_xml_to_arrow_parser_file(stations_parser: XmlToArrowParser, test_data_dir: Path) -> None:
     """Test parsing XML from a file-like object.
 
     Verifies that the parser can accept an open file handle
     in addition to file paths.
     """
     xml_path = test_data_dir / "stations.xml"
-    with open(xml_path, "r") as f:
+    with open(xml_path) as f:
         record_batches = stations_parser.parse(f)
     assert "report" in record_batches
     assert "stations" in record_batches
     assert "measurements" in record_batches
 
 
-def test_xml_to_arrow_parser_repr(
-    stations_parser: XmlToArrowParser, test_data_dir: Path
-) -> None:
+def test_xml_to_arrow_parser_repr(stations_parser: XmlToArrowParser, test_data_dir: Path) -> None:
     """Test the string representation of XmlToArrowParser.
 
     Verifies that __repr__ returns the exact expected format with the full config path.
@@ -192,23 +187,23 @@ def test_xml_to_arrow_parse_parse_error(
     as a float raises the appropriate error, with the field name,
     invalid value, and target type in the message.
     """
-    with pytest.raises(ParseError) as excinfo:
-        with tempfile.TemporaryFile(mode="w+b") as f:
-            f.write(
-                rb"""
-                <report>
-                    <monitoring_stations>
-                        <monitoring_station>
-                            <location>
-                                <latitude>not float</latitude>
-                            </location>
-                        </monitoring_station>
-                    </monitoring_stations>
-                </report>
-            """
-            )
-            f.flush()  # Ensure data is written to the file
-            f.seek(0)  # Reset the file pointer to the beginning
+    with tempfile.TemporaryFile(mode="w+b") as f:
+        f.write(
+            rb"""
+            <report>
+                <monitoring_stations>
+                    <monitoring_station>
+                        <location>
+                            <latitude>not float</latitude>
+                        </location>
+                    </monitoring_station>
+                </monitoring_stations>
+            </report>
+        """
+        )
+        f.flush()
+        f.seek(0)
+        with pytest.raises(ParseError) as excinfo:
             stations_parser.parse(f)
     msg = str(excinfo.value)
     assert "not float" in msg
@@ -412,19 +407,13 @@ tables:
     record_batches = parser.parse(xml_path)
 
     # All tables should be present, even those with no matching XML elements
-    assert len(record_batches) == 4, (
-        "Expected 4 tables to be created (including empty ones)"
-    )
+    assert len(record_batches) == 4, "Expected 4 tables to be created (including empty ones)"
 
     # Check that all table names are present
     assert "metadata" in record_batches, "metadata table should exist"
-    assert "comments" in record_batches, (
-        "comments table should exist (even though empty)"
-    )
+    assert "comments" in record_batches, "comments table should exist (even though empty)"
     assert "items" in record_batches, "items table should exist"
-    assert "categories" in record_batches, (
-        "categories table should exist (even though empty)"
-    )
+    assert "categories" in record_batches, "categories table should exist (even though empty)"
 
     # Verify metadata table has 1 row
     metadata_batch = record_batches["metadata"]
@@ -437,9 +426,7 @@ tables:
     # Verify comments table is empty but has correct schema
     comments_batch = record_batches["comments"]
     assert comments_batch.num_rows == 0, "comments table should have 0 rows"
-    assert comments_batch.num_columns == 2, (
-        "comments table should have 2 columns (index + text)"
-    )
+    assert comments_batch.num_columns == 2, "comments table should have 2 columns (index + text)"
     assert comments_batch.schema == pa.schema(
         [
             pa.field("<comment>", pa.uint32(), nullable=False),
@@ -471,7 +458,7 @@ tables:
 
 
 @pytest.mark.parametrize(
-    "data_type, xml_value, expected_value, arrow_type",
+    ("data_type", "xml_value", "expected_value", "arrow_type"),
     [
         ("Boolean", "true", True, pa.bool_()),
         ("Boolean", "false", False, pa.bool_()),
@@ -540,7 +527,7 @@ tables:
 
 
 @pytest.mark.parametrize(
-    "data_type, xml_value, arrow_type",
+    ("data_type", "xml_value", "arrow_type"),
     [
         ("Boolean", "true", pa.bool_()),
         ("Int8", "42", pa.int8()),
@@ -617,7 +604,9 @@ tables:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(config_yaml)
 
-    xml_data = '<root><item label="日本語ラベル"><value>Ünïcödé — «données» 中文 🌍</value></item></root>'
+    xml_data = (
+        '<root><item label="日本語ラベル"><value>Ünïcödé — «données» 中文 🌍</value></item></root>'
+    )
     xml_path = tmp_path / "data.xml"
     xml_path.write_text(xml_data, encoding="utf-8")
 
@@ -908,7 +897,7 @@ def test_bookstore_namespaced_xml(test_data_dir: Path) -> None:
         "Empty Spaces: A Meditation",
     ]
     assert books_dict["author"] == [
-        "Jane O'Connor & Bob \"The Coder\" Smith",  # entities decoded
+        'Jane O\'Connor & Bob "The Coder" Smith',  # entities decoded
         "María García-López",  # accented characters
         "田中太郎",  # Japanese
     ]
@@ -945,7 +934,7 @@ def test_bookstore_namespaced_xml(test_data_dir: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "xml_data, expected_fragment",
+    ("xml_data", "expected_fragment"),
     [
         # Unclosed tag
         ("<root><item>text</root>", "item"),

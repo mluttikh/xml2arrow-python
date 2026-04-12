@@ -1,9 +1,10 @@
 """Shared pytest fixtures for xml2arrow tests."""
 
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 
 import pytest
+
 from xml2arrow import XmlToArrowParser
 
 
@@ -106,4 +107,4 @@ def parser_factory(tmp_path: Path) -> Generator:
         config.write_text(config_content)
         return XmlToArrowParser(config)
 
-    yield _create_parser
+    return _create_parser
