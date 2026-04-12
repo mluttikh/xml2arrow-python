@@ -866,6 +866,83 @@ tables:
     assert result["test_table"].to_pydict()["value"] == ["test"]
 
 
+def test_bookstore_namespaced_xml(test_data_dir: Path) -> None:
+    """Integration test with namespaced XML, CDATA, entities, comments, and self-closing tags.
+
+    Exercises:
+    - Namespace prefixes on elements and attributes (bk:, rv:) — stripped by parser
+    - XML entities in text content (&amp;, &quot; via O'Connor)
+    - CDATA sections in review text
+    - XML comments (<!-- -->) ignored
+    - Self-closing elements (<bk:tags/>) producing no child rows
+    - Hyphenated element/attribute names (store-name, in-stock)
+    - Boolean attribute values
+    - Multi-level nesting (books → tags, books → reviews)
+    - Unicode author name (Japanese)
+    - Varying child counts across parent rows
+    """
+    config_path = test_data_dir / "bookstore.yaml"
+    xml_path = test_data_dir / "bookstore.xml"
+
+    parser = XmlToArrowParser(config_path)
+    result = parser.parse(xml_path)
+
+    assert set(result.keys()) == {"store", "books", "tags", "reviews"}
+
+    # Store metadata (single-row, root-level table)
+    store = result["store"].to_pydict()
+    assert store["store_name"] == ["The Great Bookshop"]
+    assert store["currency"] == ["EUR"]
+
+    # Books table — 3 books with namespaced attributes and entity-escaped text
+    books = result["books"]
+    assert books.num_rows == 3
+    books_dict = books.to_pydict()
+    assert books_dict["<book>"] == [0, 1, 2]
+    assert books_dict["id"] == ["B001", "B002", "B003"]
+    assert books_dict["in_stock"] == [True, False, True]
+    assert books_dict["title"] == [
+        "The Art of Programming",
+        "Data & Algorithms",  # &amp; entity decoded
+        "Empty Spaces: A Meditation",
+    ]
+    assert books_dict["author"] == [
+        "Jane O'Connor & Bob \"The Coder\" Smith",  # entities decoded
+        "María García-López",  # accented characters
+        "田中太郎",  # Japanese
+    ]
+    assert books_dict["price"] == [
+        pytest.approx(29.99),
+        pytest.approx(45.50),
+        pytest.approx(15.00),
+    ]
+    assert books_dict["pages"] == [384, 612, 128]
+    assert books.schema.field("pages").type == pa.uint16()
+
+    # Tags — varying counts per book: 2, 1, 0 (self-closing <bk:tags/>)
+    tags = result["tags"]
+    assert tags.num_rows == 3
+    tags_dict = tags.to_pydict()
+    assert tags_dict["<book>"] == [0, 0, 1]
+    assert tags_dict["<tag>"] == [0, 1, 0]
+    assert tags_dict["tag"] == ["programming", "computer science", "algorithms"]
+
+    # Reviews — book 0 has 2, book 1 has 0 (comment only), book 2 has 1
+    reviews = result["reviews"]
+    assert reviews.num_rows == 3
+    reviews_dict = reviews.to_pydict()
+    assert reviews_dict["<book>"] == [0, 0, 2]
+    assert reviews_dict["<review>"] == [0, 1, 0]
+    assert reviews_dict["rating"] == [5, 4, 3]
+    assert reviews_dict["reviewer"] == ["Alice", "Bob", "Charlie"]
+    assert reviews_dict["text"] == [
+        "Excellent book! <must-read> for all developers.",  # CDATA preserved raw
+        "Good but could use more examples.",
+        "It was okay — nothing special.",  # em dash
+    ]
+    assert reviews.schema.field("rating").type == pa.uint8()
+
+
 def test_version_returns_string() -> None:
     """Test that the package version is a non-empty string.
 

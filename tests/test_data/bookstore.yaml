@@ -1,0 +1,73 @@
+tables:
+  - name: store
+    xml_path: /
+    levels: []
+    fields:
+      - name: store_name
+        xml_path: /catalog/meta/store-name
+        data_type: Utf8
+        nullable: false
+      - name: currency
+        xml_path: /catalog/meta/currency
+        data_type: Utf8
+        nullable: false
+
+  - name: books
+    xml_path: /catalog/books
+    levels:
+      - book
+    fields:
+      - name: id
+        xml_path: /catalog/books/book/@id
+        data_type: Utf8
+        nullable: false
+      - name: in_stock
+        xml_path: /catalog/books/book/@in-stock
+        data_type: Boolean
+        nullable: false
+      - name: title
+        xml_path: /catalog/books/book/title
+        data_type: Utf8
+        nullable: false
+      - name: author
+        xml_path: /catalog/books/book/author
+        data_type: Utf8
+        nullable: false
+      - name: price
+        xml_path: /catalog/books/book/price
+        data_type: Float64
+        nullable: false
+      - name: pages
+        xml_path: /catalog/books/book/pages
+        data_type: UInt16
+        nullable: false
+
+  - name: tags
+    xml_path: /catalog/books/book/tags
+    levels:
+      - book
+      - tag
+    fields:
+      - name: tag
+        xml_path: /catalog/books/book/tags/tag
+        data_type: Utf8
+        nullable: false
+
+  - name: reviews
+    xml_path: /catalog/books/book/reviews
+    levels:
+      - book
+      - review
+    fields:
+      - name: rating
+        xml_path: /catalog/books/book/reviews/review/@rating
+        data_type: UInt8
+        nullable: false
+      - name: reviewer
+        xml_path: /catalog/books/book/reviews/review/reviewer
+        data_type: Utf8
+        nullable: false
+      - name: text
+        xml_path: /catalog/books/book/reviews/review/text
+        data_type: Utf8
+        nullable: false
