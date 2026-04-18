@@ -978,6 +978,94 @@ tables:
     assert result["test_table"].num_rows == 0
 
 
+def test_parse_bytes_input(stations_parser: XmlToArrowParser, test_data_dir: Path) -> None:
+    """Test that parse() accepts bytes input via the zero-copy fast path.
+
+    The result must match what the streaming path produces from the same file.
+    """
+    xml_path = test_data_dir / "stations.xml"
+    xml_bytes = xml_path.read_bytes()
+
+    from_bytes = stations_parser.parse(xml_bytes)
+    from_path = stations_parser.parse(xml_path)
+
+    assert set(from_bytes.keys()) == set(from_path.keys())
+    for name in from_path:
+        assert from_bytes[name].schema == from_path[name].schema
+        assert from_bytes[name].to_pydict() == from_path[name].to_pydict()
+
+
+def test_parse_bytearray_input(stations_parser: XmlToArrowParser, test_data_dir: Path) -> None:
+    """Test that parse() accepts bytearray input via the zero-copy fast path."""
+    xml_path = test_data_dir / "stations.xml"
+    xml_data = bytearray(xml_path.read_bytes())
+
+    from_bytearray = stations_parser.parse(xml_data)
+    from_path = stations_parser.parse(xml_path)
+
+    assert set(from_bytearray.keys()) == set(from_path.keys())
+    for name in from_path:
+        assert from_bytearray[name].to_pydict() == from_path[name].to_pydict()
+
+
+def test_parse_empty_bytes(parser_factory) -> None:
+    """Test that an empty bytes input produces an empty result without crashing."""
+    parser = parser_factory(
+        """
+tables:
+  - name: items
+    xml_path: /root
+    levels: []
+    fields:
+      - name: value
+        xml_path: /root/item
+        data_type: Utf8
+        nullable: true
+"""
+    )
+    result = parser.parse(b"")
+    assert result["items"].num_rows == 0
+
+
+def test_parse_bytes_malformed_raises(parser_factory) -> None:
+    """Test that malformed XML in a bytes input raises XmlParsingError."""
+    parser = parser_factory(
+        """
+tables:
+  - name: items
+    xml_path: /root
+    levels: []
+    fields:
+      - name: value
+        xml_path: /root/item
+        data_type: Utf8
+        nullable: true
+"""
+    )
+    with pytest.raises(XmlParsingError, match="item"):
+        parser.parse(b"<root><item>text</root>")
+
+
+def test_parse_bytes_preserves_unicode(parser_factory) -> None:
+    """Test that non-ASCII text in bytes input is decoded correctly."""
+    parser = parser_factory(
+        """
+tables:
+  - name: items
+    xml_path: /root
+    levels: []
+    fields:
+      - name: value
+        xml_path: /root/item
+        data_type: Utf8
+        nullable: false
+"""
+    )
+    xml = "<root><item>Ünïcödé 中文 🌍</item></root>".encode()
+    batch = parser.parse(xml)["items"]
+    assert batch.to_pydict()["value"] == ["Ünïcödé 中文 🌍"]
+
+
 def test_version_returns_string() -> None:
     """Test that the package version is a non-empty string.
 

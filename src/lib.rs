@@ -1,5 +1,8 @@
 use arrow::pyarrow::ToPyArrow;
-use pyo3::{prelude::*, types::PyDict};
+use pyo3::{
+    prelude::*,
+    types::{PyByteArray, PyBytes, PyDict},
+};
 use pyo3_file::PyFileLikeObject;
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -9,7 +12,7 @@ use xml2arrow::errors::{
     NoTableOnStackError, ParseError, TableNotFoundError, UnsupportedConversionError,
     UnsupportedDataTypeError, Xml2ArrowError, XmlParsingError, YamlParsingError,
 };
-use xml2arrow::parse_xml;
+use xml2arrow::{parse_xml, parse_xml_slice};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -18,32 +21,49 @@ fn _get_version() -> &'static str {
     VERSION
 }
 
-/// Represents either a path `File` or a file-like object `FileLike`
-#[derive(Debug)]
-pub enum FileOrFileLike {
+/// Represents an XML input source.
+///
+/// `Bytes` (zero-copy) and `OwnedBytes` (a safe copy of a mutable
+/// `bytearray`) route through [`parse_xml_slice`]; `File` and `FileLike`
+/// stream through [`parse_xml`].
+pub enum XmlInput<'py> {
+    Bytes(Bound<'py, PyBytes>),
+    OwnedBytes(Vec<u8>),
     File(File),
     FileLike(PyFileLikeObject),
 }
 
-impl<'py> FromPyObject<'py> for FileOrFileLike {
+impl<'py> FromPyObject<'py> for XmlInput<'py> {
     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        if let Ok(path) = ob.extract::<PathBuf>() {
-            Ok(Self::File(File::open(path)?))
-        } else if let Ok(path) = ob.extract::<String>() {
-            Ok(Self::File(File::open(path)?))
-        } else {
-            Ok(Self::FileLike(PyFileLikeObject::with_requirements(
-                ob.clone().unbind(),
-                true,
-                false,
-                false,
-                false,
-            )?))
+        if let Ok(b) = ob.downcast::<PyBytes>() {
+            return Ok(Self::Bytes(b.clone()));
         }
+        if let Ok(ba) = ob.downcast::<PyByteArray>() {
+            return Ok(Self::OwnedBytes(ba.to_vec()));
+        }
+        if let Ok(path) = ob.extract::<PathBuf>() {
+            return Ok(Self::File(File::open(path)?));
+        }
+        if let Ok(path) = ob.extract::<String>() {
+            return Ok(Self::File(File::open(path)?));
+        }
+        Ok(Self::FileLike(PyFileLikeObject::with_requirements(
+            ob.clone().unbind(),
+            true,
+            false,
+            false,
+            false,
+        )?))
     }
 }
 
-impl Read for FileOrFileLike {
+/// A streaming adapter over `File` and file-like Python objects.
+enum XmlReader {
+    File(File),
+    FileLike(PyFileLikeObject),
+}
+
+impl Read for XmlReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         match self {
             Self::File(f) => f.read(buf),
@@ -76,25 +96,33 @@ impl XmlToArrowParser {
         })
     }
 
-    /// Parses an XML file and returns a dictionary of Arrow RecordBatches.
+    /// Parses an XML source and returns a dictionary of Arrow RecordBatches.
+    ///
+    /// In-memory inputs (``bytes`` and ``bytearray``) take a zero-copy fast
+    /// path. Paths and file-like objects stream through a buffered reader.
     ///
     /// Args:
-    ///     source (str, PathLike or file like object): The XML file to parse.
+    ///     source: The XML to parse. Accepts ``str``, ``os.PathLike``,
+    ///         ``bytes``, ``bytearray``, or a readable file-like object.
     ///
     /// Returns:
     ///     dict: A dictionary where keys are table names (strings) and values are PyArrow RecordBatch objects.
     #[pyo3(signature = (source))]
-    pub fn parse(&self, source: FileOrFileLike) -> PyResult<Py<PyAny>> {
-        let reader = BufReader::new(source);
-        let batches = parse_xml(reader, &self.config)?;
-        Python::attach(|py| {
-            let tables = PyDict::new(py);
-            for (name, batch) in batches {
-                let py_batch = batch.to_pyarrow(py)?;
-                tables.set_item(name, py_batch)?;
+    pub fn parse(&self, py: Python<'_>, source: XmlInput<'_>) -> PyResult<Py<PyAny>> {
+        let batches = match source {
+            XmlInput::Bytes(b) => parse_xml_slice(b.as_bytes(), &self.config)?,
+            XmlInput::OwnedBytes(v) => parse_xml_slice(&v, &self.config)?,
+            XmlInput::File(f) => parse_xml(BufReader::new(XmlReader::File(f)), &self.config)?,
+            XmlInput::FileLike(f) => {
+                parse_xml(BufReader::new(XmlReader::FileLike(f)), &self.config)?
             }
-            Ok(tables.into())
-        })
+        };
+        let tables = PyDict::new(py);
+        for (name, batch) in batches {
+            let py_batch = batch.to_pyarrow(py)?;
+            tables.set_item(name, py_batch)?;
+        }
+        Ok(tables.into())
     }
 
     fn __repr__(&self) -> String {
