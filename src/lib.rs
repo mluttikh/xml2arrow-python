@@ -3,7 +3,6 @@ use pyo3::{
     prelude::*,
     types::{PyByteArray, PyBytes, PyDict},
 };
-use pyo3_file::PyFileLikeObject;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
@@ -13,6 +12,9 @@ use xml2arrow::errors::{
     YamlParsingError,
 };
 use xml2arrow::{parse_xml, parse_xml_slice};
+
+mod file_like;
+use file_like::PyBinaryFile;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -30,15 +32,18 @@ pub enum XmlInput<'py> {
     Bytes(Bound<'py, PyBytes>),
     OwnedBytes(Vec<u8>),
     File(File),
-    FileLike(PyFileLikeObject),
+    FileLike(PyBinaryFile),
 }
 
-impl<'py> FromPyObject<'py> for XmlInput<'py> {
-    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        if let Ok(b) = ob.downcast::<PyBytes>() {
+impl<'a, 'py> FromPyObject<'a, 'py> for XmlInput<'py> {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        let ob: &Bound<'py, PyAny> = &obj;
+        if let Ok(b) = ob.cast::<PyBytes>() {
             return Ok(Self::Bytes(b.clone()));
         }
-        if let Ok(ba) = ob.downcast::<PyByteArray>() {
+        if let Ok(ba) = ob.cast::<PyByteArray>() {
             return Ok(Self::OwnedBytes(ba.to_vec()));
         }
         if let Ok(path) = ob.extract::<PathBuf>() {
@@ -47,20 +52,14 @@ impl<'py> FromPyObject<'py> for XmlInput<'py> {
         if let Ok(path) = ob.extract::<String>() {
             return Ok(Self::File(File::open(path)?));
         }
-        Ok(Self::FileLike(PyFileLikeObject::with_requirements(
-            ob.clone().unbind(),
-            true,
-            false,
-            false,
-            false,
-        )?))
+        Ok(Self::FileLike(PyBinaryFile::from_bound(ob)?))
     }
 }
 
 /// A streaming adapter over `File` and file-like Python objects.
 enum XmlReader {
     File(File),
-    FileLike(PyFileLikeObject),
+    FileLike(PyBinaryFile),
 }
 
 impl Read for XmlReader {
