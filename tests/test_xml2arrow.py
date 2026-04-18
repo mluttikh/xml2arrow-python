@@ -11,6 +11,7 @@ import pytest
 
 from xml2arrow import XmlToArrowParser
 from xml2arrow.exceptions import (
+    InvalidConfigError,
     ParseError,
     UnsupportedConversionError,
     XmlParsingError,
@@ -307,6 +308,54 @@ tables:
         UnsupportedConversionError,
         match=r"Offset is only supported for Float32 and Float64.*Utf8",
     ):
+        XmlToArrowParser(config_path)
+
+
+def test_invalid_config_error_duplicate_table(tmp_path: Path) -> None:
+    """Test that a configuration with duplicate table names raises InvalidConfigError."""
+    config_yaml = """
+tables:
+  - name: dup
+    xml_path: /root
+    levels: []
+    fields:
+      - name: a
+        xml_path: /root/a
+        data_type: Utf8
+        nullable: false
+  - name: dup
+    xml_path: /root
+    levels: []
+    fields:
+      - name: b
+        xml_path: /root/b
+        data_type: Utf8
+        nullable: false
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    with pytest.raises(InvalidConfigError, match=r"Duplicate table name 'dup'"):
+        XmlToArrowParser(config_path)
+
+
+def test_invalid_config_error_field_path_not_under_table(tmp_path: Path) -> None:
+    """Test that a field xml_path outside its table's xml_path raises InvalidConfigError."""
+    config_yaml = """
+tables:
+  - name: t
+    xml_path: /root/inside
+    levels: []
+    fields:
+      - name: stray
+        xml_path: /root/outside/stray
+        data_type: Utf8
+        nullable: false
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    with pytest.raises(InvalidConfigError, match=r"not under table"):
         XmlToArrowParser(config_path)
 
 

@@ -9,8 +9,8 @@ use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use xml2arrow::config::Config;
 use xml2arrow::errors::{
-    NoTableOnStackError, ParseError, TableNotFoundError, UnsupportedConversionError,
-    UnsupportedDataTypeError, Xml2ArrowError, XmlParsingError, YamlParsingError,
+    InvalidConfigError, ParseError, UnsupportedConversionError, Xml2ArrowError, XmlParsingError,
+    YamlParsingError,
 };
 use xml2arrow::{parse_xml, parse_xml_slice};
 
@@ -140,17 +140,12 @@ fn _xml2arrow(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("Xml2ArrowError", py.get_type::<Xml2ArrowError>())?;
     m.add("XmlParsingError", py.get_type::<XmlParsingError>())?;
     m.add("YamlParsingError", py.get_type::<YamlParsingError>())?;
-    m.add(
-        "UnsupportedDataTypeError",
-        py.get_type::<UnsupportedDataTypeError>(),
-    )?;
-    m.add("TableNotFoundError", py.get_type::<TableNotFoundError>())?;
-    m.add("NoTableOnStackError", py.get_type::<NoTableOnStackError>())?;
     m.add("ParseError", py.get_type::<ParseError>())?;
     m.add(
         "UnsupportedConversionError",
         py.get_type::<UnsupportedConversionError>(),
     )?;
+    m.add("InvalidConfigError", py.get_type::<InvalidConfigError>())?;
     m.add_wrapped(wrap_pyfunction!(_get_version))?;
     Ok(())
 }

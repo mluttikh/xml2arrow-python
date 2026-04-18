@@ -8,8 +8,9 @@ class XmlToArrowParser:
 
     Raises:
         Xml2ArrowError: If any error occurs during parsing, configuration, or Arrow table creation.
-            More specific exceptions (e.g., XmlParsingError, YamlParsingError, TableNotFoundError)
-            may be raised as subclasses of this base exception.
+            More specific exceptions (e.g., XmlParsingError, YamlParsingError, ParseError,
+            UnsupportedConversionError, InvalidConfigError) may be raised as subclasses of this
+            base exception.
     """
 
     def __init__(self, config_path: str | PathLike) -> None:
