@@ -11,6 +11,7 @@ import pytest
 
 from xml2arrow import XmlToArrowParser
 from xml2arrow.exceptions import (
+    InvalidConfigError,
     ParseError,
     UnsupportedConversionError,
     XmlParsingError,
@@ -307,6 +308,54 @@ tables:
         UnsupportedConversionError,
         match=r"Offset is only supported for Float32 and Float64.*Utf8",
     ):
+        XmlToArrowParser(config_path)
+
+
+def test_invalid_config_error_duplicate_table(tmp_path: Path) -> None:
+    """Test that a configuration with duplicate table names raises InvalidConfigError."""
+    config_yaml = """
+tables:
+  - name: dup
+    xml_path: /root
+    levels: []
+    fields:
+      - name: a
+        xml_path: /root/a
+        data_type: Utf8
+        nullable: false
+  - name: dup
+    xml_path: /root
+    levels: []
+    fields:
+      - name: b
+        xml_path: /root/b
+        data_type: Utf8
+        nullable: false
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    with pytest.raises(InvalidConfigError, match=r"Duplicate table name 'dup'"):
+        XmlToArrowParser(config_path)
+
+
+def test_invalid_config_error_field_path_not_under_table(tmp_path: Path) -> None:
+    """Test that a field xml_path outside its table's xml_path raises InvalidConfigError."""
+    config_yaml = """
+tables:
+  - name: t
+    xml_path: /root/inside
+    levels: []
+    fields:
+      - name: stray
+        xml_path: /root/outside/stray
+        data_type: Utf8
+        nullable: false
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    with pytest.raises(InvalidConfigError, match=r"not under table"):
         XmlToArrowParser(config_path)
 
 
@@ -976,6 +1025,94 @@ tables:
     result = parser.parse(xml_path)
 
     assert result["test_table"].num_rows == 0
+
+
+def test_parse_bytes_input(stations_parser: XmlToArrowParser, test_data_dir: Path) -> None:
+    """Test that parse() accepts bytes input via the zero-copy fast path.
+
+    The result must match what the streaming path produces from the same file.
+    """
+    xml_path = test_data_dir / "stations.xml"
+    xml_bytes = xml_path.read_bytes()
+
+    from_bytes = stations_parser.parse(xml_bytes)
+    from_path = stations_parser.parse(xml_path)
+
+    assert set(from_bytes.keys()) == set(from_path.keys())
+    for name in from_path:
+        assert from_bytes[name].schema == from_path[name].schema
+        assert from_bytes[name].to_pydict() == from_path[name].to_pydict()
+
+
+def test_parse_bytearray_input(stations_parser: XmlToArrowParser, test_data_dir: Path) -> None:
+    """Test that parse() accepts bytearray input via the zero-copy fast path."""
+    xml_path = test_data_dir / "stations.xml"
+    xml_data = bytearray(xml_path.read_bytes())
+
+    from_bytearray = stations_parser.parse(xml_data)
+    from_path = stations_parser.parse(xml_path)
+
+    assert set(from_bytearray.keys()) == set(from_path.keys())
+    for name in from_path:
+        assert from_bytearray[name].to_pydict() == from_path[name].to_pydict()
+
+
+def test_parse_empty_bytes(parser_factory) -> None:
+    """Test that an empty bytes input produces an empty result without crashing."""
+    parser = parser_factory(
+        """
+tables:
+  - name: items
+    xml_path: /root
+    levels: []
+    fields:
+      - name: value
+        xml_path: /root/item
+        data_type: Utf8
+        nullable: true
+"""
+    )
+    result = parser.parse(b"")
+    assert result["items"].num_rows == 0
+
+
+def test_parse_bytes_malformed_raises(parser_factory) -> None:
+    """Test that malformed XML in a bytes input raises XmlParsingError."""
+    parser = parser_factory(
+        """
+tables:
+  - name: items
+    xml_path: /root
+    levels: []
+    fields:
+      - name: value
+        xml_path: /root/item
+        data_type: Utf8
+        nullable: true
+"""
+    )
+    with pytest.raises(XmlParsingError, match="item"):
+        parser.parse(b"<root><item>text</root>")
+
+
+def test_parse_bytes_preserves_unicode(parser_factory) -> None:
+    """Test that non-ASCII text in bytes input is decoded correctly."""
+    parser = parser_factory(
+        """
+tables:
+  - name: items
+    xml_path: /root
+    levels: []
+    fields:
+      - name: value
+        xml_path: /root/item
+        data_type: Utf8
+        nullable: false
+"""
+    )
+    xml = "<root><item>Ünïcödé 中文 🌍</item></root>".encode()
+    batch = parser.parse(xml)["items"]
+    assert batch.to_pydict()["value"] == ["Ünïcödé 中文 🌍"]
 
 
 def test_version_returns_string() -> None:

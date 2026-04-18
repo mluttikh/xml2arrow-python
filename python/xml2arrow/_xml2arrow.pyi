@@ -8,8 +8,9 @@ class XmlToArrowParser:
 
     Raises:
         Xml2ArrowError: If any error occurs during parsing, configuration, or Arrow table creation.
-            More specific exceptions (e.g., XmlParsingError, YamlParsingError, TableNotFoundError)
-            may be raised as subclasses of this base exception.
+            More specific exceptions (e.g., XmlParsingError, YamlParsingError, ParseError,
+            UnsupportedConversionError, InvalidConfigError) may be raised as subclasses of this
+            base exception.
     """
 
     def __init__(self, config_path: str | PathLike) -> None:
@@ -22,11 +23,19 @@ class XmlToArrowParser:
             Xml2ArrowError: If the configuration file cannot be loaded or parsed.
         """
 
-    def parse(self, source: str | PathLike | IO[Any]) -> dict[str, RecordBatch]:
-        """Parses an XML file and returns a dictionary of Arrow RecordBatches.
+    def parse(
+        self,
+        source: str | PathLike | bytes | bytearray | IO[Any],
+    ) -> dict[str, RecordBatch]:
+        """Parses an XML source and returns a dictionary of Arrow RecordBatches.
+
+        In-memory inputs (``bytes`` and ``bytearray``) take a zero-copy fast
+        path. Paths and file-like objects stream through a buffered reader.
 
         Args:
-            source: The XML file to parse (path or file-like object).
+            source: The XML to parse. Accepts a path (``str`` or ``os.PathLike``),
+                an in-memory buffer (``bytes`` or ``bytearray``), or any readable
+                file-like object.
 
         Returns:
             A dictionary where keys are table names (strings) and values are
