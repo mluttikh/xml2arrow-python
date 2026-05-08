@@ -210,11 +210,64 @@ jobs:
           name: wheels-sdist
           path: dist
 
+  # Pinned to Pyodide 0.27.7 — matches Marimo and pydantic-core, and is the
+  # latest Pyodide release where `pyarrow` is enabled in pyodide-recipes (it
+  # is `_disabled: true` on 0.28+ pending an ABI rebuild — see
+  # pyodide/pyodide#4135). Bundled CPython is 3.12, bundled emscripten is
+  # 3.1.58. Verify the emscripten pin with:
+  #   curl -sL https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide-lock.json | jq .info.platform
+  pyodide:
+    name: Build Pyodide wheel
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Nightly is required for the `-Z link-native-libraries=no` rustflag
+      # maturin passes to cargo for emscripten. Pin must be past Rust 1.88
+      # stable (2025-06-26) because upstream `xml2arrow` uses let-chains, which
+      # were stabilized in 1.88. Pyodide 0.27's emscripten 3.1.58 has been
+      # well-trodden by nightly-2025-02-17 (pydantic-core), so toolchain
+      # drift past that point is the main risk to watch on bumps.
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-08-01
+          targets: wasm32-unknown-emscripten
+          components: rust-src
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install emsdk
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: "3.1.58"
+          actions-cache-folder: emsdk-cache
+
+      - name: Install maturin
+        run: pip install 'maturin>=1.8,<2.0'
+
+      - name: Build wheel
+        run: maturin build --release --target wasm32-unknown-emscripten --out dist -i 3.12
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          # Distinct artifact name keeps this out of the release job's
+          # `wheels-*/*` PyPI upload glob — PyPI rejects emscripten platform
+          # tags. Distribute Pyodide wheels via GH releases or a CDN instead.
+          name: wasm-wheels-pyodide-0.27
+          path: dist
+
   release:
     name: Release
     runs-on: ubuntu-latest
     if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
-    needs: [test, linux, musllinux, windows, macos, sdist]
+    needs: [test, linux, musllinux, windows, macos, sdist, pyodide]
     permissions:
       # Use to sign the release artifacts
       id-token: write
@@ -227,7 +280,9 @@ jobs:
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
         with:
-          subject-path: "wheels-*/*"
+          subject-path: |
+            wheels-*/*
+            wasm-wheels-*/*
       - name: Publish to PyPI
         if: ${{ startsWith(github.ref, 'refs/tags/') }}
         uses: PyO3/maturin-action@v1
@@ -236,3 +291,12 @@ jobs:
         with:
           command: upload
           args: --non-interactive --skip-existing wheels-*/*
+      # Pyodide wheel goes to the GitHub release instead of PyPI (PyPI rejects
+      # the emscripten platform tag). softprops/action-gh-release creates the
+      # release if it doesn't exist, otherwise appends the file.
+      - name: Attach Pyodide wheel to GitHub release
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: wasm-wheels-*/*
+          fail_on_unmatched_files: true
