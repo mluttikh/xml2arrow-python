@@ -31,6 +31,20 @@ jobs:
       - name: Run Ruff format
         run: ruff format python/ --check
 
+  type-check:
+    name: Type Check
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install mypy pyarrow
+      - name: Run mypy
+        run: mypy
+
   test:
     name: Test
     needs: lint # Only run tests if linting passes

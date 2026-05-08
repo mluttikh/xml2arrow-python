@@ -1,8 +1,9 @@
 from os import PathLike
-from typing import IO, Any
+from typing import IO, Any, final
 
 from pyarrow import RecordBatch
 
+@final
 class XmlToArrowParser:
     """A parser for converting XML files to Arrow tables based on a configuration.
 
@@ -13,7 +14,7 @@ class XmlToArrowParser:
             base exception.
     """
 
-    def __init__(self, config_path: str | PathLike) -> None:
+    def __init__(self, config_path: str | PathLike[str]) -> None:
         """Initializes the parser with a configuration file path.
 
         Args:
@@ -25,7 +26,7 @@ class XmlToArrowParser:
 
     def parse(
         self,
-        source: str | PathLike | bytes | bytearray | IO[Any],
+        source: str | PathLike[str] | bytes | bytearray | IO[Any],
     ) -> dict[str, RecordBatch]:
         """Parses an XML source and returns a dictionary of Arrow RecordBatches.
 
@@ -48,6 +49,13 @@ class XmlToArrowParser:
         """
 
     def __repr__(self) -> str: ...
+
+class Xml2ArrowError(Exception): ...
+class XmlParsingError(Xml2ArrowError): ...
+class YamlParsingError(Xml2ArrowError): ...
+class ParseError(Xml2ArrowError): ...
+class UnsupportedConversionError(Xml2ArrowError): ...
+class InvalidConfigError(Xml2ArrowError): ...
 
 def _get_version() -> str:
     """Returns the version of the xml2arrow package."""
