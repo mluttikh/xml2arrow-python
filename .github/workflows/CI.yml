@@ -226,15 +226,16 @@ jobs:
         with:
           python-version: "3.12"
 
-      # wasm32-unknown-emscripten is a tier-3 target, so nightly + rust-src are
-      # required. Pinned past the let_chains stabilization (Feb 26 2025) since
-      # upstream `xml2arrow` uses them — pydantic-core's `nightly-2025-02-17`
-      # pin is too old. Keep the pin close to pydantic-core's so the
-      # emscripten 3.1.58 / Pyodide 0.27 toolchain stays well-trodden.
+      # Nightly is required for the `-Z link-native-libraries=no` rustflag
+      # maturin passes to cargo for emscripten. Pin must be past Rust 1.88
+      # stable (2025-06-26) because upstream `xml2arrow` uses let-chains, which
+      # were stabilized in 1.88. Pyodide 0.27's emscripten 3.1.58 has been
+      # well-trodden by nightly-2025-02-17 (pydantic-core), so toolchain
+      # drift past that point is the main risk to watch on bumps.
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-04-15
+          toolchain: nightly-2025-08-01
           targets: wasm32-unknown-emscripten
           components: rust-src
 
