@@ -17,11 +17,17 @@ class XmlToArrowParser:
     def __init__(self, config_path: str | PathLike[str]) -> None:
         """Initializes the parser with a configuration file path.
 
+        The configuration is loaded, validated, and compiled here, once. Reuse a
+        single parser instance across many files to amortize this setup cost.
+
         Args:
             config_path: The path to the YAML configuration file.
 
         Raises:
-            Xml2ArrowError: If the configuration file cannot be loaded or parsed.
+            Xml2ArrowError: If the configuration file cannot be loaded, parsed, or
+                validated. Because validation happens at construction time, an
+                invalid config (e.g. InvalidConfigError) is raised here rather
+                than on the first ``parse()`` call.
         """
 
     def parse(

@@ -129,6 +129,19 @@ names defined in your config. Because the values are standard PyArrow
 `RecordBatch` objects they integrate directly with pandas, Polars, DuckDB,
 and any other tool in the Arrow ecosystem.
 
+> **Tip:** Constructing an `XmlToArrowParser` validates the config and compiles
+> its path lookup table once, up front. When processing many files with the same
+> config, build the parser **once** and reuse it across `parse()` calls — this
+> amortizes that fixed setup cost and is noticeably faster than creating a new
+> parser per file, especially for many small documents.
+>
+> ```python
+> parser = XmlToArrowParser("config.yaml")  # validate + compile once
+> for path in xml_files:
+>     record_batches = parser.parse(path)   # reused for every file
+>     ...
+> ```
+
 ## Example
 
 This example extracts meteorological station data from a nested XML document into
