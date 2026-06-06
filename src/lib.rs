@@ -6,12 +6,12 @@ use pyo3::{
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
+use xml2arrow::Parser;
 use xml2arrow::config::Config;
 use xml2arrow::errors::{
     InvalidConfigError, ParseError, UnsupportedConversionError, Xml2ArrowError, XmlParsingError,
     YamlParsingError,
 };
-use xml2arrow::Parser;
 
 mod file_like;
 use file_like::PyBinaryFile;
@@ -122,9 +122,7 @@ impl XmlToArrowParser {
             XmlInput::Bytes(b) => self.parser.parse_slice(b.as_bytes())?,
             XmlInput::OwnedBytes(v) => self.parser.parse_slice(&v)?,
             XmlInput::File(f) => self.parser.parse(BufReader::new(XmlReader::File(f)))?,
-            XmlInput::FileLike(f) => {
-                self.parser.parse(BufReader::new(XmlReader::FileLike(f)))?
-            }
+            XmlInput::FileLike(f) => self.parser.parse(BufReader::new(XmlReader::FileLike(f)))?,
         };
         let tables = PyDict::new(py);
         for (name, batch) in batches {
