@@ -11,7 +11,7 @@ use xml2arrow::errors::{
     InvalidConfigError, ParseError, UnsupportedConversionError, Xml2ArrowError, XmlParsingError,
     YamlParsingError,
 };
-use xml2arrow::{parse_xml, parse_xml_slice};
+use xml2arrow::Parser;
 
 mod file_like;
 use file_like::PyBinaryFile;
@@ -72,10 +72,16 @@ impl Read for XmlReader {
 }
 
 /// A parser for converting XML files to Arrow tables based on a configuration.
+///
+/// The configuration's path trie is compiled once, here, and reused for every
+/// `parse()` call via [`xml2arrow::Parser`]. This matters most when one parser
+/// instance processes many files: the fixed per-document setup cost (config
+/// validation + path-trie construction) is paid a single time rather than on
+/// every parse.
 #[pyclass(name = "XmlToArrowParser")]
 pub struct XmlToArrowParser {
     config_path: PathBuf,
-    config: Config,
+    parser: Parser,
 }
 
 #[pymethods]
@@ -89,9 +95,13 @@ impl XmlToArrowParser {
     ///     XmlToArrowParser: A new parser instance.
     #[new]
     pub fn new(config_path: PathBuf) -> PyResult<Self> {
+        // Compile the config once here. `Parser::new` also runs config
+        // validation, so an invalid config now surfaces at construction time
+        // rather than on the first `parse()` call.
+        let config = Config::from_yaml_file(config_path.clone())?;
         Ok(XmlToArrowParser {
-            config_path: config_path.clone(),
-            config: Config::from_yaml_file(config_path)?,
+            config_path,
+            parser: Parser::new(&config)?,
         })
     }
 
@@ -109,11 +119,11 @@ impl XmlToArrowParser {
     #[pyo3(signature = (source))]
     pub fn parse(&self, py: Python<'_>, source: XmlInput<'_>) -> PyResult<Py<PyAny>> {
         let batches = match source {
-            XmlInput::Bytes(b) => parse_xml_slice(b.as_bytes(), &self.config)?,
-            XmlInput::OwnedBytes(v) => parse_xml_slice(&v, &self.config)?,
-            XmlInput::File(f) => parse_xml(BufReader::new(XmlReader::File(f)), &self.config)?,
+            XmlInput::Bytes(b) => self.parser.parse_slice(b.as_bytes())?,
+            XmlInput::OwnedBytes(v) => self.parser.parse_slice(&v)?,
+            XmlInput::File(f) => self.parser.parse(BufReader::new(XmlReader::File(f)))?,
             XmlInput::FileLike(f) => {
-                parse_xml(BufReader::new(XmlReader::FileLike(f)), &self.config)?
+                self.parser.parse(BufReader::new(XmlReader::FileLike(f)))?
             }
         };
         let tables = PyDict::new(py);
