@@ -19,6 +19,11 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded runs of the same branch/PR; never cancel a tag (release) build.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
 jobs:
   # Two ways the dependency wiring can be wrong, both of which build fine on
   # the machine that introduced them and fail for everyone else.
@@ -134,6 +139,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Install dependencies
         run: pip install maturin pytest pytest-cov pyarrow
       - name: Build wheel
@@ -144,6 +150,13 @@ jobs:
         run: pip install --no-index --find-links=dist xml2arrow
       - name: Run tests with coverage
         run: pytest tests/ -v --cov=xml2arrow --cov-report=xml --cov-report=term
+      - name: Check type stubs match the compiled module
+        # stubtest imports the built extension, so it runs here rather than
+        # in the pure-Python type-check job. One matrix cell is enough.
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          pip install mypy
+          python -m mypy.stubtest xml2arrow._xml2arrow
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         uses: codecov/codecov-action@v4
@@ -152,6 +165,9 @@ jobs:
           fail_ci_if_error: false
 
   linux:
+    # Release artifacts only; PR/branch correctness signal comes from the
+    # test matrix, so skip these expensive builds outside tags and manual runs.
+    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -189,6 +205,9 @@ jobs:
           path: dist
 
   musllinux:
+    # Release artifacts only; PR/branch correctness signal comes from the
+    # test matrix, so skip these expensive builds outside tags and manual runs.
+    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -222,6 +241,9 @@ jobs:
           path: dist
 
   windows:
+    # Release artifacts only; PR/branch correctness signal comes from the
+    # test matrix, so skip these expensive builds outside tags and manual runs.
+    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -251,6 +273,9 @@ jobs:
           path: dist
 
   macos:
+    # Release artifacts only; PR/branch correctness signal comes from the
+    # test matrix, so skip these expensive builds outside tags and manual runs.
+    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -279,6 +304,9 @@ jobs:
           path: dist
 
   sdist:
+    # Release artifacts only; PR/branch correctness signal comes from the
+    # test matrix, so skip these expensive builds outside tags and manual runs.
+    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     needs: wheels-wanted
     if: needs.wheels-wanted.outputs.build == 'true'

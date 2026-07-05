@@ -3,6 +3,17 @@ from typing import IO, Any, final
 
 from pyarrow import RecordBatch, RecordBatchReader, Schema
 
+__all__ = [
+    "XmlToArrowParser",
+    "Xml2ArrowError",
+    "XmlParsingError",
+    "YamlParsingError",
+    "ParseError",
+    "UnsupportedConversionError",
+    "InvalidConfigError",
+    "_get_version",
+]
+
 @final
 class XmlToArrowParser:
     """A parser for converting XML files to Arrow tables based on a configuration.
@@ -14,7 +25,7 @@ class XmlToArrowParser:
             base exception.
     """
 
-    def __init__(self, config_path: str | PathLike[str]) -> None:
+    def __new__(cls, config_path: str | PathLike[str]) -> XmlToArrowParser:
         """Initializes the parser with a configuration file path.
 
         The configuration is loaded, validated, and compiled here, once. Reuse a
@@ -68,19 +79,22 @@ class XmlToArrowParser:
 
     def parse(
         self,
-        source: str | PathLike[str] | bytes | bytearray | IO[Any],
+        source: str | PathLike[str] | bytes | bytearray | memoryview | IO[Any],
     ) -> dict[str, RecordBatch]:
         """Parses an XML source and returns a dictionary of Arrow RecordBatches.
 
         In-memory inputs (``bytes`` and ``bytearray``) take a zero-copy fast
-        path. Paths and file-like objects stream through a buffered reader.
-        The GIL is released while parsing, so threads sharing one parser
-        instance can parse different sources in parallel.
+        path; ``io.BytesIO`` and buffer-protocol exporters (``memoryview``,
+        NumPy ``uint8`` arrays, ...) are snapshotted with a single copy.
+        Paths and file-like objects (including ``mmap.mmap``) stream through
+        a buffered reader. The GIL is released while parsing, so threads
+        sharing one parser instance can parse different sources in parallel.
 
         Args:
             source: The XML to parse. Accepts a path (``str`` or ``os.PathLike``),
-                an in-memory buffer (``bytes`` or ``bytearray``), or any readable
-                file-like object.
+                an in-memory buffer (``bytes``, ``bytearray``, or any object
+                exporting the buffer protocol), or any readable file-like
+                object.
 
         Returns:
             A dictionary where keys are table names (strings) and values are
@@ -249,6 +263,13 @@ class RecordBatchStream:
     def __iter__(self) -> RecordBatchStream: ...
     def __next__(self) -> tuple[str, RecordBatch]: ...
     def __repr__(self) -> str: ...
+    def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
+        """Supports pickling, and therefore multiprocessing.
+
+        Path-built parsers re-read their configuration file in the child
+        process; ``from_yaml_str`` parsers carry the configuration inside
+        the pickle.
+        """
 
 class Xml2ArrowError(Exception): ...
 class XmlParsingError(Xml2ArrowError): ...
