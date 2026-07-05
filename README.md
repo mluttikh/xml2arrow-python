@@ -19,7 +19,10 @@ Rust crate for high performance.
 - 🎯 **Type conversion** including automatic scale and offset transforms for float fields
 - 💡 **Attribute and element extraction** using `@`-prefixed path segments for attributes
 - ⏹️ **Early termination** via `stop_at_paths` for efficiently reading only part of a file
-- 🐍 **Flexible input** — accepts file paths, path-like objects, or any file-like object
+- 🐍 **Flexible input** — accepts file paths, path-like objects, readable file-like
+  objects, or in-memory `bytes`/`bytearray` (parsed zero-copy, no intermediate buffering)
+- 🧵 **Thread-friendly** — the GIL is released while parsing, so threads sharing one
+  parser instance can parse multiple documents in parallel
 
 ## Installation
 
@@ -108,7 +111,8 @@ import polars as pl
 from xml2arrow import XmlToArrowParser
 
 parser = XmlToArrowParser("config.yaml")
-record_batches = parser.parse("data.xml")  # also accepts pathlib.Path or any file-like object
+record_batches = parser.parse("data.xml")  # also accepts pathlib.Path, bytes,
+                                           # bytearray, or any file-like object
 
 # Access a table by name
 batch = record_batches["measurements"]     # pyarrow.RecordBatch
