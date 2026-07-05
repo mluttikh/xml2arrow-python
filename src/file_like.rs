@@ -20,6 +20,11 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 
 /// A read-only adapter over a Python file-like object.
+///
+/// Exceptions raised inside `read()` are flattened into `io::Error` here (the
+/// `Read` interface demands it), but pyo3 stores the original `PyErr` as the
+/// inner error and upstream's `From<Error> for PyErr` recovers it, so the
+/// caller still sees the real exception rather than a stringified wrapper.
 pub struct PyBinaryFile {
     inner: Py<PyAny>,
     is_text: bool,

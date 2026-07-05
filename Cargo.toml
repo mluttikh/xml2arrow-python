@@ -9,9 +9,25 @@ name = "_xml2arrow"
 crate-type = ["cdylib"]
 
 [dependencies]
-xml2arrow = { version = "0.17.0", features = ["python"] }
+# 0.17.1 recovers the original Python exception when a file-like's read()
+# fails (see recover_py_err in upstream errors.rs); the error-fidelity tests
+# in tests/test_xml2arrow.py depend on it.
+xml2arrow = { version = "0.17.1", features = ["python"] }
 arrow = { version = "58.1.0", features = ["pyarrow"] }
+
+# TEMPORARY: resolve xml2arrow from the sibling checkout until 0.17.1 is
+# published to crates.io. Remove this section after `cargo publish` upstream —
+# CI has no ../xml2arrow and will fail while this is present.
+[patch.crates-io]
+xml2arrow = { path = "../xml2arrow" }
 
 [dependencies.pyo3]
 version = "0.28"
 features = ["extension-module", "abi3-py310"]
+
+# Wheel builds go through this profile (maturin build --release); the
+# size/speed win is worth the slower release compile.
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "symbols"

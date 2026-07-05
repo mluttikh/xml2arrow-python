@@ -1115,6 +1115,131 @@ tables:
     assert batch.to_pydict()["value"] == ["Ünïcödé 中文 🌍"]
 
 
+def test_parse_str_path(stations_parser: XmlToArrowParser, test_data_dir: Path) -> None:
+    """Test that parse() accepts a plain str path, not just os.PathLike."""
+    record_batches = stations_parser.parse(str(test_data_dir / "stations.xml"))
+    assert "stations" in record_batches
+
+
+def test_parse_missing_file_error_includes_path(
+    stations_parser: XmlToArrowParser, tmp_path: Path
+) -> None:
+    """Test that a nonexistent XML path raises FileNotFoundError naming the file."""
+    missing = tmp_path / "nope.xml"
+    with pytest.raises(FileNotFoundError, match="nope.xml"):
+        stations_parser.parse(missing)
+    with pytest.raises(FileNotFoundError, match="nope.xml"):
+        stations_parser.parse(str(missing))
+
+
+def test_missing_config_file_error_includes_path(tmp_path: Path) -> None:
+    """Test that a nonexistent config path raises FileNotFoundError naming the file."""
+    with pytest.raises(FileNotFoundError, match="no_config.yaml"):
+        XmlToArrowParser(tmp_path / "no_config.yaml")
+
+
+def test_parse_xml_content_as_str_raises_helpful_error(
+    stations_parser: XmlToArrowParser,
+) -> None:
+    """Test that passing XML content as a str gets a hint instead of FileNotFoundError."""
+    with pytest.raises(ValueError, match=r"looks like XML content"):
+        stations_parser.parse("<report></report>")
+    # Leading whitespace and an XML declaration should still trigger the hint
+    with pytest.raises(ValueError, match=r"looks like XML content"):
+        stations_parser.parse('\n  <?xml version="1.0"?><report/>')
+
+
+def test_parse_rejects_non_source_types(stations_parser: XmlToArrowParser) -> None:
+    """Test that unsupported source types raise TypeError with the documented message."""
+    with pytest.raises(TypeError, match=r"path, bytes-like, or file-like"):
+        stations_parser.parse(12345)  # type: ignore[arg-type]
+
+
+def test_file_like_read_exception_propagates(stations_parser: XmlToArrowParser) -> None:
+    """Test that an exception raised inside a file-like's read() is re-raised as-is.
+
+    Before the read-error slot in PyBinaryFile, the original exception was
+    flattened into an XmlParsingError message string.
+    """
+
+    class ExplodingReader:
+        def read(self, _size: int) -> bytes:
+            raise ConnectionResetError("connection lost mid-stream")
+
+    with pytest.raises(ConnectionResetError, match="connection lost mid-stream"):
+        stations_parser.parse(ExplodingReader())
+
+
+def test_file_like_read_wrong_type_raises_type_error(
+    stations_parser: XmlToArrowParser,
+) -> None:
+    """Test that a read() returning a non-buffer type surfaces as TypeError."""
+
+    class BadReader:
+        def read(self, _size: int) -> int:
+            return 42
+
+    with pytest.raises(TypeError):
+        stations_parser.parse(BadReader())
+
+
+def test_parse_closed_file_raises_value_error(
+    stations_parser: XmlToArrowParser, test_data_dir: Path
+) -> None:
+    """Test that parsing an already-closed file raises the original ValueError."""
+    f = open(test_data_dir / "stations.xml", "rb")
+    f.close()
+    with pytest.raises(ValueError, match="closed file"):
+        stations_parser.parse(f)
+
+
+def test_parse_releases_the_gil(tmp_path: Path) -> None:
+    """Test that parse() releases the GIL so other Python threads keep running.
+
+    A worker thread parses a document large enough to take a while; the main
+    thread must be able to execute Python (many loop iterations) before the
+    worker finishes. If parse() held the GIL throughout, the main thread
+    would freeze after at most a couple of iterations.
+    """
+    import threading
+    import time
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+tables:
+  - name: items
+    xml_path: /root
+    levels: [item]
+    fields:
+      - name: value
+        xml_path: /root/item/value
+        data_type: Int64
+        nullable: false
+"""
+    )
+    parser = XmlToArrowParser(config_path)
+    big = b"<root>" + b"<item><value>12345</value></item>" * 150_000 + b"</root>"
+
+    started = threading.Event()
+    done = threading.Event()
+
+    def work() -> None:
+        started.set()
+        parser.parse(big)
+        done.set()
+
+    worker = threading.Thread(target=work)
+    worker.start()
+    assert started.wait(timeout=10)
+    iterations = 0
+    while not done.is_set():
+        iterations += 1
+        time.sleep(0.001)
+    worker.join()
+    assert iterations >= 5, "main thread was starved: parse() appears to hold the GIL"
+
+
 def test_version_returns_string() -> None:
     """Test that the package version is a non-empty string.
 
