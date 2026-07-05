@@ -3,6 +3,7 @@
 This module contains tests for the XmlToArrowParser class and related functionality.
 """
 
+import array
 import tempfile
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from xml2arrow.exceptions import (
     InvalidConfigError,
     ParseError,
     UnsupportedConversionError,
+    Xml2ArrowError,
     XmlParsingError,
     YamlParsingError,
 )
@@ -1151,7 +1153,7 @@ def test_parse_xml_content_as_str_raises_helpful_error(
 
 def test_parse_rejects_non_source_types(stations_parser: XmlToArrowParser) -> None:
     """Test that unsupported source types raise TypeError with the documented message."""
-    with pytest.raises(TypeError, match=r"path, bytes-like, or file-like"):
+    with pytest.raises(TypeError, match=r"path, bytes-like or buffer object, or a file-like"):
         stations_parser.parse(12345)  # type: ignore[arg-type]
 
 
@@ -1269,6 +1271,138 @@ tables:
     assert done.is_set(), "worker never finished parsing"
     assert not worker_error, f"parse() raised in the worker: {worker_error[0]!r}"
     assert iterations >= 3, "main thread was starved: parse() appears to hold the GIL"
+
+
+@pytest.mark.parametrize(
+    "wrap",
+    [
+        pytest.param(lambda data: memoryview(data), id="memoryview-readonly"),
+        pytest.param(lambda data: memoryview(bytearray(data)), id="memoryview-writable"),
+        pytest.param(lambda data: array.array("B", data), id="array-B"),
+    ],
+)
+def test_parse_buffer_protocol_inputs(
+    stations_parser: XmlToArrowParser, test_data_dir: Path, wrap
+) -> None:
+    """Test that buffer-protocol exporters are accepted and match the bytes path."""
+    data = (test_data_dir / "stations.xml").read_bytes()
+    from_buffer = stations_parser.parse(wrap(data))
+    from_bytes = stations_parser.parse(data)
+    assert set(from_buffer.keys()) == set(from_bytes.keys())
+    for name in from_bytes:
+        assert from_buffer[name].to_pydict() == from_bytes[name].to_pydict()
+
+
+@pytest.mark.parametrize(
+    "wrap",
+    [
+        pytest.param(lambda _data: array.array("d", [1.5, 2.5]), id="wrong-itemsize"),
+        pytest.param(lambda data: memoryview(data)[::2], id="non-contiguous"),
+    ],
+)
+def test_parse_rejects_buffers_that_are_not_contiguous_bytes(
+    stations_parser: XmlToArrowParser, test_data_dir: Path, wrap
+) -> None:
+    """A buffer only means "these bytes" if its elements are bytes, in order.
+
+    Without this check the failure is silent rather than loud: an ``array('d')``
+    exports a buffer as happily as an ``array('B')``, and its raw bytes contain
+    no ``<``, so the parse succeeds and returns *zero rows*. An empty result
+    for a wrong input is the one outcome worth ruling out.
+    """
+    data = (test_data_dir / "stations.xml").read_bytes()
+    with pytest.raises(TypeError, match="contiguous buffer of bytes"):
+        stations_parser.parse(wrap(data))
+
+
+def test_parse_mmap_input(stations_parser: XmlToArrowParser, test_data_dir: Path) -> None:
+    """Test that an mmap of the XML file parses via the streaming path."""
+    import mmap
+
+    with open(test_data_dir / "stations.xml", "rb") as f:
+        with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+            record_batches = stations_parser.parse(mm)
+    assert "stations" in record_batches
+
+
+def test_parse_bytesio_fast_path(stations_parser: XmlToArrowParser, test_data_dir: Path) -> None:
+    """Test BytesIO parsing: content, cursor position honored, cursor left at EOF."""
+    import io
+
+    data = (test_data_dir / "stations.xml").read_bytes()
+    expected = stations_parser.parse(data)
+
+    bio = io.BytesIO(data)
+    result = stations_parser.parse(bio)
+    assert set(result.keys()) == set(expected.keys())
+    assert bio.tell() == len(data), "cursor should be at EOF, as after read()"
+
+    # Content before the current cursor position must be skipped, exactly as
+    # the streaming read() path would.
+    with_junk = io.BytesIO(b"JUNK" + data)
+    with_junk.seek(4)
+    result = stations_parser.parse(with_junk)
+    assert set(result.keys()) == set(expected.keys())
+
+
+def test_parse_stringio_input(stations_parser: XmlToArrowParser, test_data_dir: Path) -> None:
+    """Test that StringIO streams through the text-mode file-like path."""
+    import io
+
+    text = (test_data_dir / "stations.xml").read_text()
+    record_batches = stations_parser.parse(io.StringIO(text))
+    assert "stations" in record_batches
+
+
+def test_pickle_roundtrip_path_parser(
+    stations_parser: XmlToArrowParser, test_data_dir: Path
+) -> None:
+    """Test that a path-built parser survives pickling (multiprocessing hand-off)."""
+    import pickle
+
+    restored = pickle.loads(pickle.dumps(stations_parser))
+    assert repr(restored) == repr(stations_parser)
+
+    xml = (test_data_dir / "stations.xml").read_bytes()
+    original = stations_parser.parse(xml)
+    reparsed = restored.parse(xml)
+    assert set(reparsed.keys()) == set(original.keys())
+    for name in original:
+        assert reparsed[name].to_pydict() == original[name].to_pydict()
+
+
+def test_parser_works_with_a_process_pool(
+    stations_parser: XmlToArrowParser, test_data_dir: Path
+) -> None:
+    """The README's multiprocessing example: a pool worker unpickles the parser,
+    which re-reads its config file there, and returns the parsed tables."""
+    from concurrent.futures import ProcessPoolExecutor
+
+    xml_path = str(test_data_dir / "stations.xml")
+    expected = stations_parser.parse(xml_path)
+    with ProcessPoolExecutor(max_workers=1) as pool:
+        (result,) = list(pool.map(stations_parser.parse, [xml_path]))
+    assert set(result.keys()) == set(expected.keys())
+    for name in expected:
+        assert result[name].to_pydict() == expected[name].to_pydict()
+
+
+def test_exception_hierarchy() -> None:
+    """Test that every public exception subclasses Xml2ArrowError and is catchable via it."""
+    from xml2arrow import exceptions
+
+    for name in exceptions.__all__:
+        exc = getattr(exceptions, name)
+        assert issubclass(exc, Xml2ArrowError), f"{name} must subclass Xml2ArrowError"
+
+
+def test_version_matches_installed_metadata() -> None:
+    """Test that the compiled module's version agrees with the installed package's."""
+    from importlib.metadata import version
+
+    from xml2arrow import __version__
+
+    assert __version__ == version("xml2arrow")
 
 
 def test_version_returns_string() -> None:

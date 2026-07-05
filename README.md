@@ -20,7 +20,9 @@ Rust crate for high performance.
 - 💡 **Attribute and element extraction** using `@`-prefixed path segments for attributes
 - ⏹️ **Early termination** via `stop_at_paths` for efficiently reading only part of a file
 - 🐍 **Flexible input** — accepts file paths, path-like objects, readable file-like
-  objects, or in-memory `bytes`/`bytearray` (parsed zero-copy, no intermediate buffering)
+  objects, in-memory `bytes`/`bytearray` (parsed zero-copy, no intermediate buffering),
+  `io.BytesIO`, or buffer-protocol objects such as `memoryview` and NumPy `uint8` arrays
+- 📦 **Picklable parsers** for `multiprocessing` and `ProcessPoolExecutor`
 - 🧵 **Thread-friendly** — the GIL is released while parsing, so threads sharing one
   parser instance can parse multiple documents in parallel
 - 🌊 **Bounded-memory streaming** for documents larger than RAM — `parse_batches()`
@@ -115,7 +117,7 @@ from xml2arrow import XmlToArrowParser
 
 parser = XmlToArrowParser("config.yaml")
 record_batches = parser.parse("data.xml")  # also accepts pathlib.Path, bytes,
-                                           # bytearray, or any file-like object
+                                           # bytearray, memoryview, or any file-like object
 
 # Access a table by name
 batch = record_batches["measurements"]     # pyarrow.RecordBatch
@@ -186,6 +188,21 @@ reader = parser.parse_single_table("huge.xml")
 with pq.ParquetWriter("out.parquet", reader.schema) as writer:
     for batch in reader:
         writer.write_batch(batch)
+```
+
+### Multiprocessing
+
+Parsers are picklable, so they work directly with `multiprocessing` and
+`concurrent.futures.ProcessPoolExecutor`. The pickle carries the config file's
+path, and each worker re-reads and compiles that file, so the path must be
+readable from the worker processes too:
+
+```python
+from concurrent.futures import ProcessPoolExecutor
+
+parser = XmlToArrowParser("config.yaml")
+with ProcessPoolExecutor() as pool:
+    results = list(pool.map(parser.parse, ["a.xml", "b.xml", "c.xml"]))
 ```
 
 ## Example
