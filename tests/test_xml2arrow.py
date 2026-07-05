@@ -1196,10 +1196,17 @@ def test_parse_closed_file_raises_value_error(
 def test_parse_releases_the_gil(tmp_path: Path) -> None:
     """Test that parse() releases the GIL so other Python threads keep running.
 
-    A worker thread parses a document large enough to take a while; the main
-    thread must be able to execute Python (many loop iterations) before the
-    worker finishes. If parse() held the GIL throughout, the main thread
-    would freeze after at most a couple of iterations.
+    A worker thread parses a document sized so that one parse takes ~0.3s on
+    this machine; the main thread must be able to execute Python (several
+    loop iterations) before the worker finishes. If parse() held the GIL
+    throughout, the main thread would freeze until the parse completed,
+    accumulating at most the 1-2 iterations it can squeeze in before the
+    worker enters the extension call.
+
+    The document size is calibrated rather than hardcoded: a release wheel
+    parses roughly an order of magnitude faster than a debug build, and CI
+    runners add sleep-granularity noise, so a fixed size either starves the
+    counter on fast machines or wastes time on slow ones.
     """
     import threading
     import time
@@ -1219,25 +1226,49 @@ tables:
 """
     )
     parser = XmlToArrowParser(config_path)
-    big = b"<root>" + b"<item><value>12345</value></item>" * 150_000 + b"</root>"
+
+    def build_doc(items: int) -> bytes:
+        return b"<root>" + b"<item><value>12345</value></item>" * items + b"</root>"
+
+    # Calibrate: measure a 200k-item parse, then scale the document so one
+    # parse takes ~0.3s (capped at 2M items / ~70 MB to bound memory and
+    # runtime on very slow machines).
+    target_seconds = 0.3
+    items = 200_000
+    start = time.perf_counter()
+    parser.parse(build_doc(items))
+    duration = time.perf_counter() - start
+    if duration < target_seconds:
+        items = min(int(items * target_seconds / max(duration, 1e-6)), 2_000_000)
+    big = build_doc(items)
 
     started = threading.Event()
     done = threading.Event()
+    worker_error: list[BaseException] = []
 
     def work() -> None:
         started.set()
-        parser.parse(big)
-        done.set()
+        try:
+            parser.parse(big)
+        except BaseException as exc:  # pragma: no cover - only on regression
+            worker_error.append(exc)
+        finally:
+            # Always set, even on failure: the main loop below must not spin
+            # forever if the parse raises.
+            done.set()
 
     worker = threading.Thread(target=work)
     worker.start()
     assert started.wait(timeout=10)
     iterations = 0
-    while not done.is_set():
+    deadline = time.monotonic() + 60
+    while not done.is_set() and time.monotonic() < deadline:
         iterations += 1
         time.sleep(0.001)
-    worker.join()
-    assert iterations >= 5, "main thread was starved: parse() appears to hold the GIL"
+    worker.join(timeout=10)
+    assert done.is_set(), "worker never finished parsing"
+    assert not worker_error, f"parse() raised in the worker: {worker_error[0]!r}"
+    assert iterations >= 3, "main thread was starved: parse() appears to hold the GIL"
 
 
 def test_version_returns_string() -> None:
