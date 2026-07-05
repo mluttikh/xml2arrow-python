@@ -24,6 +24,8 @@ class XmlToArrowParser:
             config_path: The path to the YAML configuration file.
 
         Raises:
+            OSError: If the configuration file cannot be opened (e.g.
+                FileNotFoundError); the message includes the path.
             Xml2ArrowError: If the configuration file cannot be loaded, parsed, or
                 validated. Because validation happens at construction time, an
                 invalid config (e.g. InvalidConfigError) is raised here rather
@@ -38,6 +40,8 @@ class XmlToArrowParser:
 
         In-memory inputs (``bytes`` and ``bytearray``) take a zero-copy fast
         path. Paths and file-like objects stream through a buffered reader.
+        The GIL is released while parsing, so threads sharing one parser
+        instance can parse different sources in parallel.
 
         Args:
             source: The XML to parse. Accepts a path (``str`` or ``os.PathLike``),
@@ -49,9 +53,16 @@ class XmlToArrowParser:
             PyArrow RecordBatch objects.
 
         Raises:
+            OSError: If ``source`` is a path that cannot be opened (e.g.
+                FileNotFoundError); the message includes the path.
+            ValueError: If ``source`` is a ``str`` holding XML content rather
+                than a file path.
+            TypeError: If ``source`` is not a supported input type.
             Xml2ArrowError: If an error occurs during XML parsing or Arrow
                 table creation. This can include errors such as invalid XML,
-                incorrect configuration, or unsupported data types.
+                incorrect configuration, or unsupported data types. Exceptions
+                raised by a file-like object's ``read()`` method propagate
+                unchanged.
         """
 
     def __repr__(self) -> str: ...

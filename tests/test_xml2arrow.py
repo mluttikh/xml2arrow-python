@@ -1115,6 +1115,162 @@ tables:
     assert batch.to_pydict()["value"] == ["Ünïcödé 中文 🌍"]
 
 
+def test_parse_str_path(stations_parser: XmlToArrowParser, test_data_dir: Path) -> None:
+    """Test that parse() accepts a plain str path, not just os.PathLike."""
+    record_batches = stations_parser.parse(str(test_data_dir / "stations.xml"))
+    assert "stations" in record_batches
+
+
+def test_parse_missing_file_error_includes_path(
+    stations_parser: XmlToArrowParser, tmp_path: Path
+) -> None:
+    """Test that a nonexistent XML path raises FileNotFoundError naming the file."""
+    missing = tmp_path / "nope.xml"
+    with pytest.raises(FileNotFoundError, match="nope.xml"):
+        stations_parser.parse(missing)
+    with pytest.raises(FileNotFoundError, match="nope.xml"):
+        stations_parser.parse(str(missing))
+
+
+def test_missing_config_file_error_includes_path(tmp_path: Path) -> None:
+    """Test that a nonexistent config path raises FileNotFoundError naming the file."""
+    with pytest.raises(FileNotFoundError, match="no_config.yaml"):
+        XmlToArrowParser(tmp_path / "no_config.yaml")
+
+
+def test_parse_xml_content_as_str_raises_helpful_error(
+    stations_parser: XmlToArrowParser,
+) -> None:
+    """Test that passing XML content as a str gets a hint instead of FileNotFoundError."""
+    with pytest.raises(ValueError, match=r"looks like XML content"):
+        stations_parser.parse("<report></report>")
+    # Leading whitespace and an XML declaration should still trigger the hint
+    with pytest.raises(ValueError, match=r"looks like XML content"):
+        stations_parser.parse('\n  <?xml version="1.0"?><report/>')
+
+
+def test_parse_rejects_non_source_types(stations_parser: XmlToArrowParser) -> None:
+    """Test that unsupported source types raise TypeError with the documented message."""
+    with pytest.raises(TypeError, match=r"path, bytes-like, or file-like"):
+        stations_parser.parse(12345)  # type: ignore[arg-type]
+
+
+def test_file_like_read_exception_propagates(stations_parser: XmlToArrowParser) -> None:
+    """Test that an exception raised inside a file-like's read() is re-raised as-is.
+
+    Before the read-error slot in PyBinaryFile, the original exception was
+    flattened into an XmlParsingError message string.
+    """
+
+    class ExplodingReader:
+        def read(self, _size: int) -> bytes:
+            raise ConnectionResetError("connection lost mid-stream")
+
+    with pytest.raises(ConnectionResetError, match="connection lost mid-stream"):
+        stations_parser.parse(ExplodingReader())
+
+
+def test_file_like_read_wrong_type_raises_type_error(
+    stations_parser: XmlToArrowParser,
+) -> None:
+    """Test that a read() returning a non-buffer type surfaces as TypeError."""
+
+    class BadReader:
+        def read(self, _size: int) -> int:
+            return 42
+
+    with pytest.raises(TypeError):
+        stations_parser.parse(BadReader())
+
+
+def test_parse_closed_file_raises_value_error(
+    stations_parser: XmlToArrowParser, test_data_dir: Path
+) -> None:
+    """Test that parsing an already-closed file raises the original ValueError."""
+    f = open(test_data_dir / "stations.xml", "rb")
+    f.close()
+    with pytest.raises(ValueError, match="closed file"):
+        stations_parser.parse(f)
+
+
+def test_parse_releases_the_gil(tmp_path: Path) -> None:
+    """Test that parse() releases the GIL so other Python threads keep running.
+
+    A worker thread parses a document sized so that one parse takes ~0.3s on
+    this machine; the main thread must be able to execute Python (several
+    loop iterations) before the worker finishes. If parse() held the GIL
+    throughout, the main thread would freeze until the parse completed,
+    accumulating at most the 1-2 iterations it can squeeze in before the
+    worker enters the extension call.
+
+    The document size is calibrated rather than hardcoded: a release wheel
+    parses roughly an order of magnitude faster than a debug build, and CI
+    runners add sleep-granularity noise, so a fixed size either starves the
+    counter on fast machines or wastes time on slow ones.
+    """
+    import threading
+    import time
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+tables:
+  - name: items
+    xml_path: /root
+    levels: [item]
+    fields:
+      - name: value
+        xml_path: /root/item/value
+        data_type: Int64
+        nullable: false
+"""
+    )
+    parser = XmlToArrowParser(config_path)
+
+    def build_doc(items: int) -> bytes:
+        return b"<root>" + b"<item><value>12345</value></item>" * items + b"</root>"
+
+    # Calibrate: measure a 200k-item parse, then scale the document so one
+    # parse takes ~0.3s (capped at 2M items / ~70 MB to bound memory and
+    # runtime on very slow machines).
+    target_seconds = 0.3
+    items = 200_000
+    start = time.perf_counter()
+    parser.parse(build_doc(items))
+    duration = time.perf_counter() - start
+    if duration < target_seconds:
+        items = min(int(items * target_seconds / max(duration, 1e-6)), 2_000_000)
+    big = build_doc(items)
+
+    started = threading.Event()
+    done = threading.Event()
+    worker_error: list[BaseException] = []
+
+    def work() -> None:
+        started.set()
+        try:
+            parser.parse(big)
+        except BaseException as exc:  # pragma: no cover - only on regression
+            worker_error.append(exc)
+        finally:
+            # Always set, even on failure: the main loop below must not spin
+            # forever if the parse raises.
+            done.set()
+
+    worker = threading.Thread(target=work)
+    worker.start()
+    assert started.wait(timeout=10)
+    iterations = 0
+    deadline = time.monotonic() + 60
+    while not done.is_set() and time.monotonic() < deadline:
+        iterations += 1
+        time.sleep(0.001)
+    worker.join(timeout=10)
+    assert done.is_set(), "worker never finished parsing"
+    assert not worker_error, f"parse() raised in the worker: {worker_error[0]!r}"
+    assert iterations >= 3, "main thread was starved: parse() appears to hold the GIL"
+
+
 def test_version_returns_string() -> None:
     """Test that the package version is a non-empty string.
 

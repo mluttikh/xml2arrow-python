@@ -31,6 +31,20 @@ jobs:
       - name: Run Ruff format
         run: ruff format python/ --check
 
+  rust-lint:
+    name: Rust Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Run rustfmt
+        run: cargo fmt --check
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
+
   type-check:
     name: Type Check
     needs: lint
@@ -47,7 +61,7 @@ jobs:
 
   test:
     name: Test
-    needs: lint # Only run tests if linting passes
+    needs: [lint, rust-lint] # Only run tests if linting passes
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -62,11 +76,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Install dependencies
-        run: pip install maturin pytest pytest-cov
+        run: pip install maturin pytest pytest-cov pyarrow
       - name: Build wheel
         run: maturin build --release --out dist
       - name: Install wheel
-        run: pip install --find-links=dist xml2arrow
+        # --no-index forces the just-built wheel; without it pip may pick a
+        # released version from PyPI and silently test the wrong artifact.
+        run: pip install --no-index --find-links=dist xml2arrow
       - name: Run tests with coverage
         run: pytest tests/ -v --cov=xml2arrow --cov-report=xml --cov-report=term
       - name: Upload coverage to Codecov
