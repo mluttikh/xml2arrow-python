@@ -11,6 +11,11 @@ crate-type = ["cdylib"]
 [dependencies]
 xml2arrow = { version = "0.18.0", features = ["python"] }
 arrow = { version = "59.0.0", features = ["pyarrow"] }
+# from_yaml_str deserializes via upstream's documented string route. The
+# version requirement must stay in lockstep with upstream xml2arrow's so
+# cargo unifies to one copy — the From<yaml_serde::Error> impl needs type
+# identity. Drift fails loudly at compile time.
+yaml_serde = "0.10"
 
 [dependencies.pyo3]
 version = "0.28"

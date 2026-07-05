@@ -146,6 +146,25 @@ and any other tool in the Arrow ecosystem.
 >     ...
 > ```
 
+### Configs without files, and multiprocessing
+
+The configuration doesn't have to live on disk — build parsers from a YAML
+string (generated at runtime, loaded from a database, ...):
+
+```python
+parser = XmlToArrowParser.from_yaml_str("""
+tables:
+  - name: items
+    xml_path: /root
+    ...
+""")
+```
+
+Parsers are picklable, so they work directly with `multiprocessing` /
+`concurrent.futures.ProcessPoolExecutor`: path-built parsers re-read their
+config file in the worker process, while `from_yaml_str` parsers carry the
+configuration inside the pickle.
+
 ## Example
 
 This example extracts meteorological station data from a nested XML document into
