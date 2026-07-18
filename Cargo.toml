@@ -12,6 +12,12 @@ crate-type = ["cdylib"]
 xml2arrow = { version = "0.18.0", features = ["python"] }
 arrow = { version = "59.0.0", features = ["pyarrow"] }
 
+# The streaming API (parse_batches / parse_single_table / schema) is not yet
+# published; build against the sibling checkout until xml2arrow 0.19 ships,
+# then delete this patch and bump the version dependency above.
+[patch.crates-io]
+xml2arrow = { path = "../xml2arrow" }
+
 [dependencies.pyo3]
 version = "0.28"
 features = ["extension-module", "abi3-py310"]

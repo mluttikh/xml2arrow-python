@@ -23,6 +23,9 @@ Rust crate for high performance.
   objects, or in-memory `bytes`/`bytearray` (parsed zero-copy, no intermediate buffering)
 - 🧵 **Thread-friendly** — the GIL is released while parsing, so threads sharing one
   parser instance can parse multiple documents in parallel
+- 🌊 **Bounded-memory streaming** for documents larger than RAM — `parse_batches()`
+  yields batches incrementally, and `parse_single_table()` returns a native
+  `pyarrow.RecordBatchReader` for Parquet/dataset/DuckDB pipelines
 
 ## Installation
 
@@ -145,6 +148,45 @@ and any other tool in the Arrow ecosystem.
 >     record_batches = parser.parse(path)   # reused for every file
 >     ...
 > ```
+
+### 4. Streaming documents too large for memory
+
+`parse()` materializes every table in full, so peak memory grows with the
+document. For XML files that don't fit in memory (multi-GB exports,
+Wikipedia-style dumps), `parse_batches()` yields each table's rows
+incrementally as `(table_name, batch)` tuples — memory stays bounded by the
+batch limits, and parsing runs on a background Rust thread that overlaps
+with your processing:
+
+```python
+parser = XmlToArrowParser("config.yaml")
+
+for name, batch in parser.parse_batches("huge.xml"):
+    writers[name].write_batch(batch)   # e.g. per-table ParquetWriter
+```
+
+Concatenating a table's batches in yield order reproduces exactly what
+`parse()` would have returned. Batches flush at 8192 rows or 128 MiB of
+accumulated values per table (tune with `max_rows_per_batch` /
+`max_bytes_per_batch`), and `parser.schema(name)` provides any table's
+schema up front for schema-first sinks. One caveat inherent to single-pass
+XML: a parent element closes *after* its children, so a child batch can
+reference a parent row that arrives in a later batch of the parent table —
+irrelevant when each table goes to its own sink.
+
+When the config defines exactly one table with fields — the common shape for
+huge documents — `parse_single_table()` returns a native
+`pyarrow.RecordBatchReader`, pluggable directly into
+`pyarrow.parquet.ParquetWriter`, `pyarrow.dataset`, or DuckDB:
+
+```python
+import pyarrow.parquet as pq
+
+reader = parser.parse_single_table("huge.xml")
+with pq.ParquetWriter("out.parquet", reader.schema) as writer:
+    for batch in reader:
+        writer.write_batch(batch)
+```
 
 ## Example
 

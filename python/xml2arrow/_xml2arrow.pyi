@@ -1,7 +1,7 @@
 from os import PathLike
 from typing import IO, Any, final
 
-from pyarrow import RecordBatch
+from pyarrow import RecordBatch, RecordBatchReader, Schema
 
 @final
 class XmlToArrowParser:
@@ -65,6 +65,116 @@ class XmlToArrowParser:
                 unchanged.
         """
 
+    def parse_batches(
+        self,
+        source: str | PathLike[str] | bytes | bytearray | IO[Any],
+        *,
+        max_rows_per_batch: int | None = None,
+        max_bytes_per_batch: int | None = None,
+    ) -> RecordBatchStream:
+        """Parses an XML source incrementally, yielding batches with bounded memory.
+
+        Returns an iterator of ``(table_name, batch)`` tuples. A table's batch
+        is emitted whenever it reaches ``max_rows_per_batch`` rows or
+        ``max_bytes_per_batch`` accumulated value bytes, so memory stays
+        bounded by the batch limits instead of the document size — this is the
+        entry point for XML files too large to parse with ``parse()``.
+        Concatenating a table's batches in yield order reproduces exactly what
+        ``parse()`` would have returned for it.
+
+        Parsing runs on a background thread that stays at most a couple of
+        batches ahead, so iterating overlaps parsing with your processing.
+
+        Args:
+            source: The XML to parse. Accepts a path (``str`` or
+                ``os.PathLike``), an in-memory buffer (``bytes`` or
+                ``bytearray``), or any readable file-like object. Unlike
+                ``parse()``, in-memory ``bytes`` are copied once.
+            max_rows_per_batch: Rows per batch before a flush (default 8192).
+            max_bytes_per_batch: Value bytes per batch before a flush
+                (default 128 MiB).
+
+        Returns:
+            An iterator of ``(str, pyarrow.RecordBatch)`` tuples. Tables with
+            no rows yield no batches; every yielded batch has at least one row.
+
+        Raises:
+            OSError: If ``source`` is a path that cannot be opened.
+            TypeError: If ``source`` is not a supported input type.
+            Xml2ArrowError: Raised from the iterator (not this call) when
+                parsing fails mid-stream; batches yielded before the error
+                remain valid.
+        """
+
+    def parse_single_table(
+        self,
+        source: str | PathLike[str] | bytes | bytearray | IO[Any],
+        *,
+        max_rows_per_batch: int | None = None,
+        max_bytes_per_batch: int | None = None,
+    ) -> RecordBatchReader:
+        """Streams the config's single output table as a native pyarrow reader.
+
+        For configurations defining exactly one table with fields — the common
+        shape for very large documents — this returns a
+        ``pyarrow.RecordBatchReader``, directly consumable by
+        ``pyarrow.parquet.ParquetWriter``, ``pyarrow.dataset``, DuckDB, and
+        anything else speaking the Arrow C stream protocol. The reader's
+        schema is available before any parsing happens.
+
+        Args:
+            source: The XML to parse. Accepts a path (``str`` or
+                ``os.PathLike``), an in-memory buffer (``bytes`` or
+                ``bytearray``), or a readable file-like object (file-like
+                objects are read fully into memory up front; prefer paths for
+                huge inputs).
+            max_rows_per_batch: Rows per batch before a flush (default 8192).
+            max_bytes_per_batch: Value bytes per batch before a flush
+                (default 128 MiB).
+
+        Returns:
+            The table's batches, in row order.
+
+        Raises:
+            InvalidConfigError: If the configuration does not define exactly
+                one table with fields.
+            OSError: If ``source`` is a path that cannot be opened.
+            TypeError: If ``source`` is not a supported input type.
+        """
+
+    def schema(self, table: str) -> Schema:
+        """Returns the pyarrow schema of an output table without parsing anything.
+
+        The schema is fully determined by the configuration: one ``<level>``
+        UInt32 index column per ``levels`` entry, followed by the configured
+        fields. Useful for setting up schema-first sinks (Parquet writers,
+        dataset registrations) before the first batch arrives.
+
+        Args:
+            table: The table name as defined in the configuration.
+
+        Returns:
+            The table's schema.
+
+        Raises:
+            KeyError: If the configuration has no output table of that name
+                (structural tables — empty ``fields`` — produce no output).
+        """
+
+    def __repr__(self) -> str: ...
+
+@final
+class RecordBatchStream:
+    """Iterator of ``(table_name, batch)`` tuples from ``parse_batches``.
+
+    Parsing runs on a background thread; iterating pulls the next available
+    batch, releasing the GIL while waiting. After exhaustion — or after a
+    parsing error is raised — the iterator only raises ``StopIteration``.
+    Dropping it early stops the background parse.
+    """
+
+    def __iter__(self) -> RecordBatchStream: ...
+    def __next__(self) -> tuple[str, RecordBatch]: ...
     def __repr__(self) -> str: ...
 
 class Xml2ArrowError(Exception): ...
