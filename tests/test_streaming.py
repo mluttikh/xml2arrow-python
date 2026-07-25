@@ -14,7 +14,7 @@ import pyarrow as pa
 import pytest
 
 from xml2arrow import RecordBatchStream, XmlToArrowParser
-from xml2arrow.exceptions import InvalidConfigError, ParseError
+from xml2arrow.exceptions import InvalidConfigError, ParseError, Xml2ArrowError
 
 SINGLE_TABLE_CONFIG = """
 tables:
@@ -32,9 +32,7 @@ tables:
 
 
 def items_xml(n: int) -> str:
-    rows = "".join(
-        f"<item><value>{i}</value><label>row {i}</label></item>" for i in range(n)
-    )
+    rows = "".join(f"<item><value>{i}</value><label>row {i}</label></item>" for i in range(n))
     return f"<root>{rows}</root>"
 
 
@@ -104,9 +102,9 @@ def test_parse_batches_accepts_all_source_types(
     ]
     for source in sources:
         grouped = collect(items_parser.parse_batches(source, max_rows_per_batch=2))
-        assert pa.Table.from_batches(grouped["items"]) == pa.Table.from_batches(
-            [expected]
-        ), f"round-trip mismatch for source {type(source).__name__}"
+        assert pa.Table.from_batches(grouped["items"]) == pa.Table.from_batches([expected]), (
+            f"round-trip mismatch for source {type(source).__name__}"
+        )
 
 
 def test_stream_is_fused_after_exhaustion(items_parser: XmlToArrowParser) -> None:
@@ -153,9 +151,7 @@ def test_abandoning_stream_early_is_clean(items_parser: XmlToArrowParser) -> Non
     # Take one batch and drop the stream: the producer thread must wind down
     # without hanging interpreter shutdown (implicitly asserted by pytest
     # exiting) and without raising.
-    stream = items_parser.parse_batches(
-        items_xml(10_000).encode(), max_rows_per_batch=1
-    )
+    stream = items_parser.parse_batches(items_xml(10_000).encode(), max_rows_per_batch=1)
     next(stream)
     del stream
 
@@ -183,9 +179,7 @@ def test_single_table_reader_from_file_like(items_parser: XmlToArrowParser) -> N
     # result must be identical to the path route.
     xml = items_xml(7)
     reader = items_parser.parse_single_table(io.BytesIO(xml.encode()))
-    assert reader.read_all() == pa.Table.from_batches(
-        [items_parser.parse(xml.encode())["items"]]
-    )
+    assert reader.read_all() == pa.Table.from_batches([items_parser.parse(xml.encode())["items"]])
 
 
 def test_single_table_requires_single_table_config(
@@ -193,6 +187,30 @@ def test_single_table_requires_single_table_config(
 ) -> None:
     with pytest.raises(InvalidConfigError, match="exactly one table"):
         stations_parser.parse_single_table(test_data_dir / "stations.xml")
+
+
+def test_single_table_mid_stream_error_surfaces_as_pyarrow_error(
+    items_parser: XmlToArrowParser,
+) -> None:
+    # Errors raised once the reader is being consumed cross Arrow's C stream
+    # interface, which carries only a message: they arrive as pyarrow
+    # exceptions quoting the original error, not as Xml2ArrowError. Pinning
+    # this keeps the documented contract honest — a caller who wants
+    # Xml2ArrowError must use parse_batches().
+    bad = "<root><item><value>oops</value><label>a</label></item></root>"
+    reader = items_parser.parse_single_table(bad.encode())
+    with pytest.raises(pa.ArrowException, match="oops") as excinfo:
+        reader.read_all()
+    assert not isinstance(excinfo.value, Xml2ArrowError)
+
+
+def test_single_table_config_error_precedes_any_parsing(
+    stations_parser: XmlToArrowParser,
+) -> None:
+    # The config check must fire on the call itself, not from deep inside
+    # pyarrow on the first batch — so it stays catchable as InvalidConfigError.
+    with pytest.raises(InvalidConfigError):
+        stations_parser.parse_single_table(b"not even valid xml")
 
 
 def test_single_table_reader_streams_to_parquet(
@@ -209,9 +227,7 @@ def test_single_table_reader_streams_to_parquet(
         for batch in reader:
             writer.write_batch(batch)
 
-    assert pq.read_table(out) == pa.Table.from_batches(
-        [items_parser.parse(xml.encode())["items"]]
-    )
+    assert pq.read_table(out) == pa.Table.from_batches([items_parser.parse(xml.encode())["items"]])
 
 
 # --- schema ------------------------------------------------------------------
@@ -229,3 +245,57 @@ def test_schema_available_without_parsing(items_parser: XmlToArrowParser) -> Non
 def test_schema_unknown_table_raises_key_error(items_parser: XmlToArrowParser) -> None:
     with pytest.raises(KeyError, match="nonexistent"):
         items_parser.schema("nonexistent")
+
+
+# --- structural (fieldless) tables --------------------------------------------
+
+STRUCTURAL_CONFIG = """
+tables:
+  - name: outline
+    xml_path: /root
+    levels: []
+    fields: []
+  - name: items
+    xml_path: /root/group
+    levels: [item]
+    fields:
+      - name: value
+        xml_path: /root/group/item/value
+        data_type: Int32
+"""
+
+STRUCTURAL_XML = (
+    b"<root><group><item><value>1</value></item><item><value>2</value></item></group></root>"
+)
+
+
+@pytest.fixture
+def structural_parser(parser_factory) -> XmlToArrowParser:  # type: ignore[no-untyped-def]
+    return parser_factory(STRUCTURAL_CONFIG)
+
+
+def test_schema_of_structural_table_raises_key_error(
+    structural_parser: XmlToArrowParser,
+) -> None:
+    # A table with no fields produces no output, so it has no schema — the
+    # case schema()'s docstring calls out, distinct from a misspelled name.
+    with pytest.raises(KeyError, match="outline"):
+        structural_parser.schema("outline")
+
+
+def test_structural_tables_yield_no_batches(
+    structural_parser: XmlToArrowParser,
+) -> None:
+    names = {name for name, _ in structural_parser.parse_batches(STRUCTURAL_XML)}
+    assert names == {"items"}
+
+
+def test_single_table_ignores_structural_siblings(
+    structural_parser: XmlToArrowParser,
+) -> None:
+    # parse_single_table's reader assumes every batch belongs to the one
+    # output table; a config with a structural sibling is where that would
+    # break if structural tables ever started emitting.
+    reader = structural_parser.parse_single_table(STRUCTURAL_XML)
+    assert reader.schema == structural_parser.schema("items")
+    assert reader.read_all().column("value").to_pylist() == [1, 2]

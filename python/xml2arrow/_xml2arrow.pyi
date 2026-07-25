@@ -100,10 +100,16 @@ class XmlToArrowParser:
 
         Raises:
             OSError: If ``source`` is a path that cannot be opened.
+            ValueError: If ``source`` is a ``str`` holding XML content rather
+                than a file path.
             TypeError: If ``source`` is not a supported input type.
             Xml2ArrowError: Raised from the iterator (not this call) when
                 parsing fails mid-stream; batches yielded before the error
                 remain valid.
+            RuntimeError: Raised from the iterator if the background parser
+                thread panics. That is a bug in the parser; the stream is
+                truncated, so the batches yielded so far are an incomplete
+                answer.
         """
 
     def parse_single_table(
@@ -137,9 +143,19 @@ class XmlToArrowParser:
 
         Raises:
             InvalidConfigError: If the configuration does not define exactly
-                one table with fields.
+                one table with fields. Raised here, before any parsing.
             OSError: If ``source`` is a path that cannot be opened.
+            ValueError: If ``source`` is a ``str`` holding XML content rather
+                than a file path.
             TypeError: If ``source`` is not a supported input type.
+
+        Note:
+            Failures that happen *while* the returned reader is consumed reach
+            Python through Arrow's C stream interface, which carries only a
+            message. They therefore arrive as ``pyarrow.ArrowException``
+            subclasses (typically ``ArrowInvalid``) quoting the original error,
+            **not** as ``Xml2ArrowError``. Use ``parse_batches()`` instead when
+            you need to catch this package's own exception types.
         """
 
     def schema(self, table: str) -> Schema:
@@ -171,6 +187,10 @@ class RecordBatchStream:
     batch, releasing the GIL while waiting. After exhaustion — or after a
     parsing error is raised — the iterator only raises ``StopIteration``.
     Dropping it early stops the background parse.
+
+    Iterate from a single thread: like any Python iterator this one is not
+    thread-safe, and here a concurrent ``__next__`` sees ``StopIteration``
+    rather than the batch another thread is taking.
     """
 
     def __iter__(self) -> RecordBatchStream: ...

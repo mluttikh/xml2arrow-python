@@ -18,15 +18,18 @@
 //!   the GIL: paths and byte buffers stream directly, and file-like objects
 //!   are slurped into memory up front (see `ThreadInput::from_input`).
 
+use std::any::Any;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
 use arrow::array::{RecordBatch, RecordBatchReader};
 use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use arrow::pyarrow::{IntoPyArrow, ToPyArrow};
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use xml2arrow::{BatchOptions, BatchStream, EventSource, Parser, TableBatch};
 
@@ -93,9 +96,9 @@ pub(crate) fn spawn_producer(
     parser: Arc<Parser>,
     input: ThreadInput,
     options: BatchOptions,
-) -> PyResult<Receiver<StreamMsg>> {
+) -> PyResult<Producer> {
     let (tx, rx) = sync_channel(CHANNEL_BOUND);
-    std::thread::Builder::new()
+    let handle = std::thread::Builder::new()
         .name("xml2arrow-stream".into())
         .spawn(move || match input {
             ThreadInput::Buffer(buf) => pump(parser.parse_batches_slice(&buf, options), &tx),
@@ -109,7 +112,67 @@ pub(crate) fn spawn_producer(
             ),
         })
         .map_err(PyErr::from)?;
-    Ok(rx)
+    Ok(Producer {
+        rx,
+        handle: Some(handle),
+    })
+}
+
+/// The consuming end of the channel *plus* the thread feeding it.
+///
+/// Keeping the `JoinHandle` is what lets a panicked producer be told apart
+/// from one that finished: both drop the sender, so a bare `recv` reports the
+/// same disconnect either way — and reporting a panic as a clean end of
+/// stream would silently truncate the caller's data.
+pub(crate) struct Producer {
+    rx: Receiver<StreamMsg>,
+    /// `Option` only because `JoinHandle::join` consumes it. It is taken at
+    /// most once, on disconnect, when there is nothing left to pull.
+    handle: Option<JoinHandle<()>>,
+}
+
+/// The outcome of one pull from the producer.
+enum Pull {
+    /// A named batch, or the parse error that ended the stream.
+    Item(StreamMsg),
+    /// The producer forwarded everything and hung up.
+    Done,
+    /// The producer thread panicked; carries the panic message.
+    Panicked(String),
+}
+
+impl Producer {
+    /// Blocks until the next message arrives or the producer disconnects.
+    ///
+    /// Joining on disconnect costs nothing measurable: the thread has already
+    /// dropped its sender, so it is at most instants from exiting.
+    fn pull(&mut self) -> Pull {
+        match self.rx.recv() {
+            Ok(msg) => Pull::Item(msg),
+            Err(_) => match self.handle.take().map(JoinHandle::join) {
+                Some(Err(payload)) => Pull::Panicked(format!(
+                    "the xml2arrow parser thread panicked: {}; \
+                     the stream ended early and its output is incomplete",
+                    panic_message(&*payload)
+                )),
+                // Either a clean finish, or a second pull after the handle was
+                // already consumed — both mean end of stream.
+                _ => Pull::Done,
+            },
+        }
+    }
+}
+
+/// Best-effort text of a panic payload: `panic!` yields `&str` for a literal
+/// message and `String` for a formatted one; anything else is opaque.
+fn panic_message(payload: &(dyn Any + Send)) -> &str {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        s
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s
+    } else {
+        "<non-string panic payload>"
+    }
 }
 
 /// Forwards every stream item into the channel. Stops on the first send
@@ -130,20 +193,24 @@ fn pump<S: EventSource>(stream: BatchStream<'_, S>, tx: &SyncSender<StreamMsg>) 
 /// Returned by `XmlToArrowParser.parse_batches`. Exhausting it, dropping it,
 /// or hitting an error all shut the producer thread down; after an error or
 /// exhaustion the iterator only raises `StopIteration`.
+///
+/// Iterate from a single thread: like any Python iterator this one is not
+/// thread-safe, and here a concurrent `__next__` sees `StopIteration` rather
+/// than the batch another thread is taking.
 #[pyclass(frozen, name = "RecordBatchStream", module = "xml2arrow")]
 pub struct RecordBatchStream {
     /// `Option` so termination can drop the channel (fusing the iterator and
     /// unblocking the producer); `Mutex` because pyclasses must be `Sync`
-    /// and `Receiver` is not. The receiver is taken *out* around the
-    /// blocking `recv` so the closure handed to `py.detach` owns it and is
+    /// and `Receiver` is not. The producer is taken *out* around the
+    /// blocking pull so the closure handed to `py.detach` owns it and is
     /// therefore `Send`.
-    rx: Mutex<Option<Receiver<StreamMsg>>>,
+    producer: Mutex<Option<Producer>>,
 }
 
 impl RecordBatchStream {
-    pub(crate) fn new(rx: Receiver<StreamMsg>) -> Self {
+    pub(crate) fn new(producer: Producer) -> Self {
         Self {
-            rx: Mutex::new(Some(rx)),
+            producer: Mutex::new(Some(producer)),
         }
     }
 }
@@ -155,35 +222,36 @@ impl RecordBatchStream {
     }
 
     fn __next__(&self, py: Python<'_>) -> PyResult<Option<(String, Py<PyAny>)>> {
-        // Taking the receiver also serializes concurrent __next__ calls: a
+        // Taking the producer also serializes concurrent __next__ calls: a
         // second caller finds None and stops, rather than blocking on a
         // channel someone else is draining.
-        let Some(rx) = self.rx.lock().unwrap().take() else {
+        let Some(mut producer) = self.producer.lock().unwrap().take() else {
             return Ok(None);
         };
         // Detach while blocked so a FileLike producer can attach for its
-        // read() calls, and so other Python threads keep running. The
-        // closure must *own* the receiver (`&Receiver` is not `Send`, which
-        // `detach` requires), so it hands it back alongside the message.
-        let (msg, rx) = py.detach(move || {
-            let msg = rx.recv();
-            (msg, rx)
-        });
-        match msg {
-            Ok(Ok((name, batch))) => {
-                *self.rx.lock().unwrap() = Some(rx);
+        // read() calls, and so other Python threads keep running. The closure
+        // must *own* the producer — a `&Producer` is not `Send`, because the
+        // `Receiver` inside it is not `Sync` — so it hands it back alongside
+        // the message.
+        let (pull, producer) = py.detach(move || (producer.pull(), producer));
+        match pull {
+            Pull::Item(Ok((name, batch))) => {
+                *self.producer.lock().unwrap() = Some(producer);
                 Ok(Some((name.to_string(), batch.to_pyarrow(py)?.unbind())))
             }
             // The parse failed and the upstream stream fused; leaving the
-            // receiver dropped makes every later call a clean StopIteration.
-            Ok(Err(e)) => Err(e.into()),
-            // Producer finished cleanly and hung up.
-            Err(_) => Ok(None),
+            // producer dropped makes every later call a clean StopIteration.
+            Pull::Item(Err(e)) => Err(e.into()),
+            Pull::Done => Ok(None),
+            // A panic is a bug, not a parse failure, so it gets RuntimeError
+            // rather than an Xml2ArrowError subclass — but it must be raised:
+            // reporting it as exhaustion would hand back a truncated table.
+            Pull::Panicked(msg) => Err(PyRuntimeError::new_err(msg)),
         }
     }
 
     fn __repr__(&self) -> String {
-        let state = if self.rx.lock().unwrap().is_some() {
+        let state = if self.producer.lock().unwrap().is_some() {
             "active"
         } else {
             "exhausted"
@@ -197,34 +265,33 @@ impl RecordBatchStream {
 /// stream interface.
 struct ChannelBatchReader {
     schema: SchemaRef,
-    rx: Receiver<StreamMsg>,
-    /// Once an error is delivered the stream is over; report end-of-stream
-    /// afterwards instead of recv-ing on a channel whose producer is gone.
-    done: bool,
+    /// `None` once the stream is over; an error (or a panic) ends it, and
+    /// pulling again on a producer that is gone would only re-report the
+    /// disconnect.
+    producer: Option<Producer>,
 }
 
 impl Iterator for ChannelBatchReader {
     type Item = Result<RecordBatch, ArrowError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
-            return None;
+        let pull = self.producer.as_mut()?.pull();
+        if !matches!(pull, Pull::Item(Ok(_))) {
+            self.producer = None;
         }
-        match self.rx.recv() {
+        match pull {
             // The config has exactly one output table (validated before the
             // producer was spawned), so every message is that table's.
-            Ok(Ok((_, batch))) => Some(Ok(batch)),
-            Ok(Err(e)) => {
-                self.done = true;
-                Some(Err(match e {
-                    xml2arrow::Error::Arrow(e) => e,
-                    e => ArrowError::ExternalError(Box::new(e)),
-                }))
-            }
-            Err(_) => {
-                self.done = true;
-                None
-            }
+            Pull::Item(Ok((_, batch))) => Some(Ok(batch)),
+            Pull::Item(Err(e)) => Some(Err(match e {
+                xml2arrow::Error::Arrow(e) => e,
+                e => ArrowError::ExternalError(Box::new(e)),
+            })),
+            Pull::Done => None,
+            // Surfacing the panic as an error keeps pyarrow from treating a
+            // truncated stream as a complete one; there is no richer channel
+            // than ArrowError across the C stream interface.
+            Pull::Panicked(msg) => Some(Err(ArrowError::ExternalError(msg.into()))),
         }
     }
 }
@@ -242,8 +309,8 @@ pub(crate) fn parse_batches_impl(
     options: BatchOptions,
 ) -> PyResult<RecordBatchStream> {
     let input = ThreadInput::from_input(input, false)?;
-    let rx = spawn_producer(parser.clone(), input, options)?;
-    Ok(RecordBatchStream::new(rx))
+    let producer = spawn_producer(parser.clone(), input, options)?;
+    Ok(RecordBatchStream::new(producer))
 }
 
 /// Implementation of `XmlToArrowParser.parse_single_table`.
@@ -258,11 +325,10 @@ pub(crate) fn parse_single_table_impl(
     // not from the first read_next_batch deep inside pyarrow.
     let schema = parser.single_table_schema()?;
     let input = ThreadInput::from_input(input, true)?;
-    let rx = spawn_producer(parser.clone(), input, options)?;
+    let producer = spawn_producer(parser.clone(), input, options)?;
     let reader: Box<dyn RecordBatchReader + Send> = Box::new(ChannelBatchReader {
         schema,
-        rx,
-        done: false,
+        producer: Some(producer),
     });
     Ok(reader.into_pyarrow(py)?.unbind())
 }

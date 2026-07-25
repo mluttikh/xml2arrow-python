@@ -232,6 +232,13 @@ impl XmlToArrowParser {
     ///
     /// Returns:
     ///     RecordBatchStream: An iterator of (str, pyarrow.RecordBatch) tuples.
+    ///
+    /// Raises:
+    ///     Xml2ArrowError: From the iterator, not this call, when parsing
+    ///         fails mid-stream. Batches yielded before it remain valid.
+    ///     RuntimeError: From the iterator, if the background parser thread
+    ///         panics. That is a bug in the parser; the stream is truncated,
+    ///         so the batches yielded so far are an incomplete answer.
     #[pyo3(signature = (source, *, max_rows_per_batch=None, max_bytes_per_batch=None))]
     pub fn parse_batches(
         &self,
@@ -269,7 +276,15 @@ impl XmlToArrowParser {
     ///
     /// Raises:
     ///     InvalidConfigError: If the configuration does not define exactly
-    ///         one table with fields.
+    ///         one table with fields. Raised here, before any parsing.
+    ///
+    /// Note:
+    ///     Failures that happen *while* the returned reader is consumed reach
+    ///     Python through Arrow's C stream interface, which carries only a
+    ///     message. They therefore arrive as ``pyarrow.ArrowException``
+    ///     subclasses (typically ``ArrowInvalid``) quoting the original error,
+    ///     **not** as ``Xml2ArrowError``. Use ``parse_batches()`` instead when
+    ///     you need to catch this package's own exception types.
     #[pyo3(signature = (source, *, max_rows_per_batch=None, max_bytes_per_batch=None))]
     pub fn parse_single_table(
         &self,
