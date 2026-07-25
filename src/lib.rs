@@ -1,21 +1,24 @@
 use arrow::pyarrow::ToPyArrow;
 use pyo3::{
-    exceptions::{PyOSError, PyValueError},
+    exceptions::{PyKeyError, PyOSError, PyValueError},
     prelude::*,
     types::{PyByteArray, PyBytes, PyDict},
 };
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
-use xml2arrow::Parser;
+use std::sync::Arc;
 use xml2arrow::config::Config;
 use xml2arrow::errors::{
     InvalidConfigError, ParseError, UnsupportedConversionError, Xml2ArrowError, XmlParsingError,
     YamlParsingError,
 };
+use xml2arrow::{BatchOptions, Parser};
 
 mod file_like;
+mod streaming;
 use file_like::PyBinaryFile;
+use streaming::RecordBatchStream;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -94,7 +97,9 @@ impl<'a, 'py> FromPyObject<'a, 'py> for XmlInput<'py> {
 }
 
 /// A streaming adapter over `File` and file-like Python objects.
-enum XmlReader {
+/// `pub(crate)` because the streaming producer thread (src/streaming.rs)
+/// reads through the same adapter.
+pub(crate) enum XmlReader {
     File(File),
     FileLike(PyBinaryFile),
 }
@@ -118,7 +123,27 @@ impl Read for XmlReader {
 #[pyclass(name = "XmlToArrowParser")]
 pub struct XmlToArrowParser {
     config_path: PathBuf,
-    parser: Parser,
+    /// `Arc` so the streaming producer threads (src/streaming.rs) can hold
+    /// the compiled parser beyond this pyclass's GIL-bound lifetime; the
+    /// synchronous `parse()` path just derefs through it.
+    parser: Arc<Parser>,
+}
+
+/// Folds the optional per-call overrides onto upstream's defaults. `None`
+/// (the Python-side default) means "keep upstream's value", so defaults are
+/// defined in exactly one place — the `BatchOptions::default()` impl.
+fn batch_options(
+    max_rows_per_batch: Option<usize>,
+    max_bytes_per_batch: Option<usize>,
+) -> BatchOptions {
+    let mut options = BatchOptions::default();
+    if let Some(rows) = max_rows_per_batch {
+        options.max_rows_per_batch = rows;
+    }
+    if let Some(bytes) = max_bytes_per_batch {
+        options.max_bytes_per_batch = bytes;
+    }
+    options
 }
 
 #[pymethods]
@@ -141,7 +166,7 @@ impl XmlToArrowParser {
         let config = Config::from_yaml_file(config_path.clone())?;
         Ok(XmlToArrowParser {
             config_path,
-            parser: Parser::new(&config)?,
+            parser: Arc::new(Parser::new(&config)?),
         })
     }
 
@@ -184,6 +209,123 @@ impl XmlToArrowParser {
         Ok(tables.into())
     }
 
+    /// Parses an XML source incrementally, yielding batches with bounded memory.
+    ///
+    /// Returns an iterator of ``(table_name, batch)`` tuples. A table's batch
+    /// is emitted whenever it reaches ``max_rows_per_batch`` rows or
+    /// ``max_bytes_per_batch`` accumulated value bytes, so memory stays
+    /// bounded by the batch limits instead of the document size — this is the
+    /// entry point for XML files too large to parse with ``parse()``.
+    /// Concatenating a table's batches in yield order reproduces exactly what
+    /// ``parse()`` would have returned for it.
+    ///
+    /// Parsing runs on a background thread that stays at most a couple of
+    /// batches ahead, so iterating overlaps parsing with your processing.
+    ///
+    /// Args:
+    ///     source: The XML to parse. Accepts ``str``, ``os.PathLike``,
+    ///         ``bytes``, ``bytearray``, or a readable file-like object.
+    ///         (Unlike ``parse()``, in-memory ``bytes`` are copied once.)
+    ///     max_rows_per_batch: Rows per batch before a flush (default 8192).
+    ///     max_bytes_per_batch: Value bytes per batch before a flush
+    ///         (default 128 MiB).
+    ///
+    /// Returns:
+    ///     RecordBatchStream: An iterator of (str, pyarrow.RecordBatch) tuples.
+    ///
+    /// Raises:
+    ///     Xml2ArrowError: From the iterator, not this call, when parsing
+    ///         fails mid-stream. Batches yielded before it remain valid.
+    ///     RuntimeError: From the iterator, if the background parser thread
+    ///         panics. That is a bug in the parser; the stream is truncated,
+    ///         so the batches yielded so far are an incomplete answer.
+    #[pyo3(signature = (source, *, max_rows_per_batch=None, max_bytes_per_batch=None))]
+    pub fn parse_batches(
+        &self,
+        source: XmlInput<'_>,
+        max_rows_per_batch: Option<usize>,
+        max_bytes_per_batch: Option<usize>,
+    ) -> PyResult<RecordBatchStream> {
+        streaming::parse_batches_impl(
+            &self.parser,
+            source,
+            batch_options(max_rows_per_batch, max_bytes_per_batch),
+        )
+    }
+
+    /// Streams the config's single output table as a native pyarrow reader.
+    ///
+    /// For configurations defining exactly one table with fields — the
+    /// common shape for very large documents — this returns a
+    /// ``pyarrow.RecordBatchReader``, directly consumable by
+    /// ``pyarrow.parquet.ParquetWriter``, ``pyarrow.dataset``, DuckDB, and
+    /// anything else speaking the Arrow C stream protocol. The reader's
+    /// schema is available before any parsing happens.
+    ///
+    /// Args:
+    ///     source: The XML to parse. Accepts ``str``, ``os.PathLike``,
+    ///         ``bytes``, ``bytearray``, or a readable file-like object
+    ///         (file-like objects are read fully into memory up front;
+    ///         prefer paths for huge inputs).
+    ///     max_rows_per_batch: Rows per batch before a flush (default 8192).
+    ///     max_bytes_per_batch: Value bytes per batch before a flush
+    ///         (default 128 MiB).
+    ///
+    /// Returns:
+    ///     pyarrow.RecordBatchReader: The table's batches, in row order.
+    ///
+    /// Raises:
+    ///     InvalidConfigError: If the configuration does not define exactly
+    ///         one table with fields. Raised here, before any parsing.
+    ///
+    /// Note:
+    ///     Failures that happen *while* the returned reader is consumed reach
+    ///     Python through Arrow's C stream interface, which carries only a
+    ///     message. They therefore arrive as ``pyarrow.ArrowException``
+    ///     subclasses (typically ``ArrowInvalid``) quoting the original error,
+    ///     **not** as ``Xml2ArrowError``. Use ``parse_batches()`` instead when
+    ///     you need to catch this package's own exception types.
+    #[pyo3(signature = (source, *, max_rows_per_batch=None, max_bytes_per_batch=None))]
+    pub fn parse_single_table(
+        &self,
+        py: Python<'_>,
+        source: XmlInput<'_>,
+        max_rows_per_batch: Option<usize>,
+        max_bytes_per_batch: Option<usize>,
+    ) -> PyResult<Py<PyAny>> {
+        streaming::parse_single_table_impl(
+            py,
+            &self.parser,
+            source,
+            batch_options(max_rows_per_batch, max_bytes_per_batch),
+        )
+    }
+
+    /// Returns the pyarrow schema of an output table without parsing anything.
+    ///
+    /// The schema is fully determined by the configuration: one ``<level>``
+    /// UInt32 index column per ``levels`` entry, followed by the configured
+    /// fields. Useful for setting up schema-first sinks (Parquet writers,
+    /// dataset registrations) before the first batch arrives.
+    ///
+    /// Args:
+    ///     table: The table name as defined in the configuration.
+    ///
+    /// Returns:
+    ///     pyarrow.Schema: The table's schema.
+    ///
+    /// Raises:
+    ///     KeyError: If the configuration has no output table of that name
+    ///         (structural tables — empty ``fields`` — produce no output).
+    pub fn schema(&self, py: Python<'_>, table: &str) -> PyResult<Py<PyAny>> {
+        match self.parser.schema(table) {
+            Some(schema) => Ok(schema.to_pyarrow(py)?.unbind()),
+            None => Err(PyKeyError::new_err(format!(
+                "no output table named '{table}' in the configuration"
+            ))),
+        }
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "XmlToArrowParser(config_path='{}')",
@@ -196,6 +338,7 @@ impl XmlToArrowParser {
 #[pymodule]
 fn _xml2arrow(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<XmlToArrowParser>()?;
+    m.add_class::<RecordBatchStream>()?;
     m.add("Xml2ArrowError", py.get_type::<Xml2ArrowError>())?;
     m.add("XmlParsingError", py.get_type::<XmlParsingError>())?;
     m.add("YamlParsingError", py.get_type::<YamlParsingError>())?;
