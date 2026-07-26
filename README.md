@@ -115,10 +115,10 @@ from xml2arrow import XmlToArrowParser
 
 parser = XmlToArrowParser("config.yaml")
 record_batches = parser.parse("data.xml")  # also accepts pathlib.Path, bytes,
-                                           # bytearray, or any file-like object
+# bytearray, or any file-like object
 
 # Access a table by name
-batch = record_batches["measurements"]     # pyarrow.RecordBatch
+batch = record_batches["measurements"]  # pyarrow.RecordBatch
 
 # Convert to a pandas DataFrame
 df = batch.to_pandas()
@@ -128,6 +128,7 @@ df = pl.from_arrow(batch)
 
 # Convert to a PyArrow Table
 import pyarrow as pa
+
 table = pa.Table.from_batches([batch])
 ```
 
@@ -155,14 +156,14 @@ and any other tool in the Arrow ecosystem.
 document. For XML files that don't fit in memory (multi-GB exports,
 Wikipedia-style dumps), `parse_batches()` yields each table's rows
 incrementally as `(table_name, batch)` tuples — memory stays bounded by the
-batch limits, and parsing runs on a background Rust thread that overlaps
+batch limits, and parsing runs as you iterate, releasing the GIL so it overlaps
 with your processing:
 
 ```python
 parser = XmlToArrowParser("config.yaml")
 
 for name, batch in parser.parse_batches("huge.xml"):
-    writers[name].write_batch(batch)   # e.g. per-table ParquetWriter
+    writers[name].write_batch(batch)  # e.g. per-table ParquetWriter
 ```
 
 Concatenating a table's batches in yield order reproduces exactly what

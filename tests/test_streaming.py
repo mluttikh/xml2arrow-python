@@ -299,3 +299,102 @@ def test_single_table_ignores_structural_siblings(
     reader = structural_parser.parse_single_table(STRUCTURAL_XML)
     assert reader.schema == structural_parser.schema("items")
     assert reader.read_all().column("value").to_pylist() == [1, 2]
+
+
+# --- owned streams -----------------------------------------------------------
+#
+# The stream owns its parser, so it no longer runs on a producer thread feeding
+# a channel. These pin what that removed rather than how it is implemented.
+
+
+def test_single_table_reads_file_like_incrementally(items_parser: XmlToArrowParser) -> None:
+    """A file-like source must stream, not be slurped into memory first.
+
+    The threaded implementation read file-like objects fully up front, because
+    its producer could not call ``read()`` while pyarrow held the interpreter.
+    Parsing on the calling thread removes the constraint: reads are interleaved
+    with the batches they feed.
+    """
+
+    class CountingFile(io.RawIOBase):
+        def __init__(self, data: bytes) -> None:
+            self._buf = io.BytesIO(data)
+            self.reads = 0
+            self.batches_at_first_read_burst = -1
+
+        def read(self, size: int = -1) -> bytes:
+            self.reads += 1
+            return self._buf.read(size)
+
+    source = CountingFile(items_xml(5_000).encode())
+    reader = items_parser.parse_single_table(source, max_rows_per_batch=64)
+
+    # The schema is known before anything is read from the source.
+    assert reader.schema == items_parser.schema("items")
+    reads_before = source.reads
+
+    first = reader.read_next_batch()
+    assert first.num_rows == 64
+    reads_after_first = source.reads
+
+    rest = sum(batch.num_rows for batch in reader)
+    assert 64 + rest == 5_000
+
+    # If the input had been materialised up front, every read would have
+    # happened before the first batch. Reads must continue past it instead.
+    assert source.reads > reads_after_first, "file-like input was read up front"
+    assert reads_before < source.reads
+
+
+def test_stream_outlives_the_parser_reference(config_factory) -> None:
+    """The stream owns the parser, so dropping the Python handle is harmless."""
+    import gc
+
+    parser = XmlToArrowParser(config_factory(SINGLE_TABLE_CONFIG))
+    stream = parser.parse_batches(items_xml(100).encode(), max_rows_per_batch=10)
+    del parser
+    gc.collect()
+
+    rows = sum(batch.num_rows for _, batch in stream)
+    assert rows == 100
+
+
+def test_single_table_reader_outlives_the_parser_reference(config_factory) -> None:
+    import gc
+
+    parser = XmlToArrowParser(config_factory(SINGLE_TABLE_CONFIG))
+    reader = parser.parse_single_table(items_xml(100).encode(), max_rows_per_batch=10)
+    schema = reader.schema
+    del parser
+    gc.collect()
+
+    table = reader.read_all()
+    assert table.num_rows == 100
+    assert table.schema == schema
+
+
+def test_streams_from_one_parser_are_independent(items_parser: XmlToArrowParser) -> None:
+    """One compiled config, several concurrent streams, no shared state."""
+    a = items_parser.parse_batches(items_xml(30).encode(), max_rows_per_batch=10)
+    b = items_parser.parse_batches(items_xml(7).encode(), max_rows_per_batch=10)
+
+    # Interleave them: batches from one must not disturb the other.
+    _, first_a = next(a)
+    _, first_b = next(b)
+    assert first_a.num_rows == 10
+    assert first_b.num_rows == 7
+
+    assert sum(batch.num_rows for _, batch in a) == 20
+    with pytest.raises(StopIteration):
+        next(b)
+
+
+def test_parse_still_works_while_a_stream_is_open(items_parser: XmlToArrowParser) -> None:
+    stream = items_parser.parse_batches(items_xml(50).encode(), max_rows_per_batch=10)
+    next(stream)
+
+    # The parser is a shared handle; an open stream does not lock it out.
+    whole = items_parser.parse(items_xml(3).encode())
+    assert whole["items"].num_rows == 3
+
+    assert sum(batch.num_rows for _, batch in stream) == 40

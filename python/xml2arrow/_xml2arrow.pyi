@@ -82,8 +82,8 @@ class XmlToArrowParser:
         Concatenating a table's batches in yield order reproduces exactly what
         ``parse()`` would have returned for it.
 
-        Parsing runs on a background thread that stays at most a couple of
-        batches ahead, so iterating overlaps parsing with your processing.
+        Parsing happens as you iterate, on the calling thread, releasing the
+        GIL for each batch so other Python threads keep running.
 
         Args:
             source: The XML to parse. Accepts a path (``str`` or
@@ -106,10 +106,6 @@ class XmlToArrowParser:
             Xml2ArrowError: Raised from the iterator (not this call) when
                 parsing fails mid-stream; batches yielded before the error
                 remain valid.
-            RuntimeError: Raised from the iterator if the background parser
-                thread panics. That is a bug in the parser; the stream is
-                truncated, so the batches yielded so far are an incomplete
-                answer.
         """
 
     def parse_single_table(
@@ -132,8 +128,8 @@ class XmlToArrowParser:
             source: The XML to parse. Accepts a path (``str`` or
                 ``os.PathLike``), an in-memory buffer (``bytes`` or
                 ``bytearray``), or a readable file-like object (file-like
-                objects are read fully into memory up front; prefer paths for
-                huge inputs).
+                objects). Every source is read incrementally, so memory stays
+                bounded by the batch limits.
             max_rows_per_batch: Rows per batch before a flush (default 8192).
             max_bytes_per_batch: Value bytes per batch before a flush
                 (default 128 MiB).
@@ -183,10 +179,10 @@ class XmlToArrowParser:
 class RecordBatchStream:
     """Iterator of ``(table_name, batch)`` tuples from ``parse_batches``.
 
-    Parsing runs on a background thread; iterating pulls the next available
-    batch, releasing the GIL while waiting. After exhaustion — or after a
-    parsing error is raised — the iterator only raises ``StopIteration``.
-    Dropping it early stops the background parse.
+    Parsing happens as you iterate, on the calling thread, with the GIL
+    released for each batch. After exhaustion — or after a parsing error is
+    raised — the iterator only raises ``StopIteration``. Dropping it early
+    stops the parse and releases the input.
 
     Iterate from a single thread: like any Python iterator this one is not
     thread-safe, and here a concurrent ``__next__`` sees ``StopIteration``
