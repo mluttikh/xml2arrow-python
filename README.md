@@ -143,6 +143,30 @@ the counter resets with its scope. That is the difference that matters:
 > stations. Joining on it silently attributes B's measurement to A — a
 > plausible DataFrame, wrong data.
 
+**Naming the key columns.** `parent:` derives its column as `_<parent table
+name>_id`, interpolating the table's `name` exactly as written. That is fine
+when table names are plain identifiers, and awkward when they are not — a
+table named `/report/stations/` yields a column named
+`_/report/stations/_id`. It is a legal Arrow field name and everything that
+quotes identifiers handles it, but it breaks unquoted SQL and is unpleasant to
+type.
+
+Set both names explicitly when your table names are paths — which is the usual
+case for a config generated from an XSD:
+
+```yaml
+  - name: /report/monitoring_stations/
+    row_id: station_id            # this table's own key
+  - name: /report/monitoring_stations/monitoring_station/measurements/
+    links:
+      - parent: /report/monitoring_stations/
+        name: station_id          # the foreign key
+```
+
+Collisions are never resolved silently: if two links, or a link and a field,
+would produce the same column, the config is rejected at load with a message
+naming `name:` as the fix.
+
 If you are adopting `links:` on an existing config and want the numbers to stay
 byte-identical, use `index_of:` rather than `parent:` — it is value-identical to
 the `<level>` column for the same path. It is an ordinal, not a key, and carries
