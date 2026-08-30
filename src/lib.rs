@@ -126,7 +126,9 @@ impl Read for XmlReader {
 /// every parse.
 #[pyclass(name = "XmlToArrowParser")]
 pub struct XmlToArrowParser {
-    config_path: PathBuf,
+    /// `None` when built from a YAML string. `__repr__` says so rather than
+    /// inventing a path that never existed.
+    config_path: Option<PathBuf>,
     /// Upstream's `Parser` is itself a handle over shared compiled state, so
     /// this is one refcounted trie however many streams are cloned off it.
     parser: Parser,
@@ -166,9 +168,36 @@ impl XmlToArrowParser {
         // Compile the config once here. `Parser::new` also runs config
         // validation, so an invalid config now surfaces at construction time
         // rather than on the first `parse()` call.
-        let config = Config::from_yaml_file(config_path.clone())?;
+        let config = Config::from_yaml_file(&config_path)?;
         Ok(XmlToArrowParser {
-            config_path,
+            config_path: Some(config_path),
+            parser: Parser::new(&config)?,
+        })
+    }
+
+    /// Creates a parser from a YAML configuration string.
+    ///
+    /// The counterpart to the path constructor, for callers that already hold
+    /// the YAML: an embedded default, a configuration fetched from a service
+    /// or built by a tool, or a test that would rather not touch the
+    /// filesystem. The configuration is validated exactly as a file-loaded one
+    /// is, so a parser obtained either way is equally trustworthy.
+    ///
+    /// Args:
+    ///     yaml (str): The YAML configuration.
+    ///
+    /// Returns:
+    ///     XmlToArrowParser: A new parser instance.
+    ///
+    /// Raises:
+    ///     YamlParsingError: If the string is not valid YAML, or does not
+    ///         describe a configuration.
+    ///     InvalidConfigError: If the configuration parses but is not valid.
+    #[staticmethod]
+    pub fn from_yaml_string(yaml: &str) -> PyResult<Self> {
+        let config = Config::from_yaml_str(yaml)?;
+        Ok(XmlToArrowParser {
+            config_path: None,
             parser: Parser::new(&config)?,
         })
     }
@@ -360,10 +389,10 @@ impl XmlToArrowParser {
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "XmlToArrowParser(config_path='{}')",
-            self.config_path.to_string_lossy()
-        )
+        match &self.config_path {
+            Some(path) => format!("XmlToArrowParser(config_path='{}')", path.to_string_lossy()),
+            None => "XmlToArrowParser(<from YAML string>)".to_string(),
+        }
     }
 }
 

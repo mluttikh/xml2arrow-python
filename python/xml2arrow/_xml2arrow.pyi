@@ -32,6 +32,38 @@ class XmlToArrowParser:
                 than on the first ``parse()`` call.
         """
 
+    @staticmethod
+    def from_yaml_string(yaml: str) -> XmlToArrowParser:
+        """Creates a parser from a YAML configuration string.
+
+        The counterpart to the path constructor, for callers that already hold
+        the YAML: an embedded default, a configuration fetched from a service
+        or built by a tool, or a test that would rather not touch the
+        filesystem. The configuration is validated exactly as a file-loaded one
+        is, so a parser obtained either way is equally trustworthy.
+
+        Args:
+            yaml: The YAML configuration.
+
+        Returns:
+            A new parser instance.
+
+        Raises:
+            YamlParsingError: If the string is not valid YAML, or does not
+                describe a configuration.
+            InvalidConfigError: If the configuration parses but is not valid.
+
+        Example:
+            >>> parser = XmlToArrowParser.from_yaml_string('''
+            ... tables:
+            ...   - name: items
+            ...     xml_path: /data
+            ...     row: item
+            ...     fields:
+            ...       - {name: value, path: value, data_type: Int32}
+            ... ''')
+        """
+
     def parse(
         self,
         source: str | PathLike[str] | bytes | bytearray | IO[Any],
