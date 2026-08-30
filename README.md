@@ -15,7 +15,15 @@ Rust crate for high performance.
 
 - 🚀 **High-performance** XML parsing via the [xml2arrow](https://github.com/mluttikh/xml2arrow) Rust crate
 - 📊 **Declarative mapping** from XML structures to Arrow tables using a YAML config file
-- 🔄 **Nested structure support** with parent–child index columns linking related tables
+- 🔄 **Nested tables** joined by declared `links:` — real `uint64` keys, not
+  positional counters that mis-align when containers repeat
+- 📐 **Declared row boundaries** via `row:`, so a table's row count is stated in
+  the config rather than inferred from which fields happen to be configured
+- 🎛️ **Per-field value handling** — `trim`, `on_missing`, `on_invalid`,
+  `on_repeat`, `null_values`, each opting out of one historical quirk; `version: 2`
+  asserts a config is fully migrated and takes the 1.0 defaults early
+- 🔎 **Config lints** via `parser.warnings()` — advisory warnings about configs
+  that are valid but behave surprisingly
 - 🎯 **Type conversion** including automatic scale and offset transforms for float fields
 - 💡 **Attribute and element extraction** using `@`-prefixed path segments for attributes
 - ⏹️ **Early termination** via `stop_at_paths` for efficiently reading only part of a file
@@ -134,6 +142,27 @@ the counter resets with its scope. That is the difference that matters:
 > The positional column resets with its scope, so it reports `0` for *both*
 > stations. Joining on it silently attributes B's measurement to A — a
 > plausible DataFrame, wrong data.
+
+**Naming the key columns.** Both are derived from the referenced table's
+`name` — `_id` on that table, `_<name>_id` on the one linking to it — and both
+can be set explicitly:
+
+```yaml
+  - name: stations
+    row_id: station_id            # this table's own key
+  - name: measurements
+    links:
+      - parent: stations
+        name: station_id          # the foreign key
+```
+
+Worth doing whenever the derived names are not what you want downstream; the
+derived form interpolates the table's `name` exactly as written, so a table
+whose name is not a plain identifier produces a column that is not one either.
+
+Collisions are never resolved silently: if two links, or a link and a field,
+would produce the same column, the config is rejected at load with a message
+naming `name:` as the fix.
 
 If you are adopting `links:` on an existing config and want the numbers to stay
 byte-identical, use `index_of:` rather than `parent:` — it is value-identical to
@@ -312,62 +341,33 @@ three linked Arrow tables.
 tables:
   - name: report
     xml_path: /
-    levels: []
+    row: report
     fields:
-      - name: title
-        xml_path: /report/header/title
-        data_type: Utf8
-      - name: created_by
-        xml_path: /report/header/created_by
-        data_type: Utf8
-      - name: creation_time
-        xml_path: /report/header/creation_time
-        data_type: Utf8
+      - {name: title,         path: header/title,         data_type: Utf8}
+      - {name: created_by,    path: header/created_by,    data_type: Utf8}
+      - {name: creation_time, path: header/creation_time, data_type: Utf8}
 
   - name: stations
     xml_path: /report/monitoring_stations
-    levels:
-      - station
+    row: monitoring_station
     fields:
-      - name: id
-        xml_path: /report/monitoring_stations/monitoring_station/@id
-        data_type: Utf8
-      - name: latitude
-        xml_path: /report/monitoring_stations/monitoring_station/location/latitude
-        data_type: Float32
-      - name: longitude
-        xml_path: /report/monitoring_stations/monitoring_station/location/longitude
-        data_type: Float32
-      - name: elevation
-        xml_path: /report/monitoring_stations/monitoring_station/location/elevation
-        data_type: Float32
-      - name: description
-        xml_path: /report/monitoring_stations/monitoring_station/metadata/description
-        data_type: Utf8
-      - name: install_date
-        xml_path: /report/monitoring_stations/monitoring_station/metadata/install_date
-        data_type: Utf8
+      - {name: id,           path: "@id",                    data_type: Utf8}
+      - {name: latitude,     path: location/latitude,        data_type: Float32}
+      - {name: longitude,    path: location/longitude,       data_type: Float32}
+      - {name: elevation,    path: location/elevation,       data_type: Float32}
+      - {name: description,  path: metadata/description,     data_type: Utf8}
+      - {name: install_date, path: metadata/install_date,    data_type: Utf8}
 
   - name: measurements
     xml_path: /report/monitoring_stations/monitoring_station/measurements
-    levels:
-      - station      # Links each measurement back to its parent station
-      - measurement
+    row: measurement
+    links:
+      - parent: stations
     fields:
-      - name: timestamp
-        xml_path: /report/monitoring_stations/monitoring_station/measurements/measurement/timestamp
-        data_type: Utf8
-      - name: temperature
-        xml_path: /report/monitoring_stations/monitoring_station/measurements/measurement/temperature
-        data_type: Float64
-        offset: 273.15   # Convert °C → K
-      - name: pressure
-        xml_path: /report/monitoring_stations/monitoring_station/measurements/measurement/pressure
-        data_type: Float64
-        scale: 100.0     # Convert hPa → Pa
-      - name: humidity
-        xml_path: /report/monitoring_stations/monitoring_station/measurements/measurement/humidity
-        data_type: Float64
+      - {name: timestamp,   path: timestamp,   data_type: Utf8}
+      - {name: temperature, path: temperature, data_type: Float64, offset: 273.15}
+      - {name: pressure,    path: pressure,    data_type: Float64, scale: 100.0}
+      - {name: humidity,    path: humidity,    data_type: Float64}
 ```
 
 ### Parsing and using the output
@@ -377,21 +377,22 @@ import polars as pl
 from xml2arrow import XmlToArrowParser
 
 parser = XmlToArrowParser("stations.yaml")
+# Or XmlToArrowParser.from_yaml_string(yaml) when the config is already in
+# memory — an embedded default, one fetched from a service, or one built by a
+# tool. It is validated exactly as a file-loaded config is.
 record_batches = parser.parse("stations.xml")
 
 stations_df = pl.from_arrow(record_batches["stations"])
 measurements_df = pl.from_arrow(record_batches["measurements"])
 
-# Join measurements back to their parent station using the <station> index.
-#
-# Correct here because every station sits in one <monitoring_stations>
-# container, so the positional counter never resets mid-document. It is not
-# correct in general: with a second container the column repeats 0 and the
-# join silently mis-attributes rows. Declaring `links: - parent: stations`
-# gives a real join key instead — see "Linking nested tables" above.
+# Join measurements back to their parent station on the declared key. The
+# config's `links: - parent: stations` produced `_stations_id` here and `_id`
+# on the stations table; the values are global row ordinals, so this join
+# stays correct however the document nests or repeats its containers.
 merged = measurements_df.join(
-    stations_df.select(["<station>", "id"]),
-    on="<station>",
+    stations_df.select(["_id", "id"]),
+    left_on="_stations_id",
+    right_on="_id",
 )
 print(merged.select(["id", "timestamp", "temperature", "pressure"]))
 ```
@@ -409,30 +410,28 @@ print(merged.select(["id", "timestamp", "temperature", "pressure"]))
  └─────────────────────────────┴──────────────────────────┴──────────────────────┘
 
 - stations:
- ┌───────────┬───────┬────────────┬────────────┬────────────┬────────────────────────┬──────────────┐
- │ <station> ┆ id    ┆ latitude   ┆ longitude  ┆ elevation  ┆ description            ┆ install_date │
- │ ---       ┆ ---   ┆ ---        ┆ ---        ┆ ---        ┆ ---                    ┆ ---          │
- │ u32       ┆ str   ┆ f32        ┆ f32        ┆ f32        ┆ str                    ┆ str          │
- ╞═══════════╪═══════╪════════════╪════════════╪════════════╪════════════════════════╪══════════════╡
- │ 0         ┆ MS001 ┆ -61.391106 ┆ 48.086628  ┆ 547.105103 ┆ Located in the Arctic  ┆ 2024-03-31   │
- │           ┆       ┆            ┆            ┆            ┆ Tundra a…              ┆              │
- │ 1         ┆ MS002 ┆ 11.891497  ┆ 135.093369 ┆ 174.533493 ┆ Located in the Desert  ┆ 2024-01-17   │
- │           ┆       ┆            ┆            ┆            ┆ area, us…              ┆              │
- └───────────┴───────┴────────────┴────────────┴────────────┴────────────────────────┴──────────────┘
+ ┌─────┬───────┬────────────┬────────────┬────────────┬─────────────────────────────────┬──────────────┐
+ │ _id ┆ id    ┆ latitude   ┆ longitude  ┆ elevation  ┆ description                     ┆ install_date │
+ │ --- ┆ ---   ┆ ---        ┆ ---        ┆ ---        ┆ ---                             ┆ ---          │
+ │ u64 ┆ str   ┆ f32        ┆ f32        ┆ f32        ┆ str                             ┆ str          │
+ ╞═════╪═══════╪════════════╪════════════╪════════════╪═════════════════════════════════╪══════════════╡
+ │ 0   ┆ MS001 ┆ -61.391106 ┆ 48.086628  ┆ 547.105103 ┆ Located in the Arctic Tundra a… ┆ 2024-03-31   │
+ │ 1   ┆ MS002 ┆ 11.891497  ┆ 135.093369 ┆ 174.533493 ┆ Located in the Desert area, us… ┆ 2024-01-17   │
+ └─────┴───────┴────────────┴────────────┴────────────┴─────────────────────────────────┴──────────────┘
 
 - measurements:
- ┌───────────┬───────────────┬──────────────────────┬─────────────┬───────────────┬───────────┐
- │ <station> ┆ <measurement> ┆ timestamp            ┆ temperature ┆ pressure      ┆ humidity  │
- │ ---       ┆ ---           ┆ ---                  ┆ ---         ┆ ---           ┆ ---       │
- │ u32       ┆ u32           ┆ str                  ┆ f64         ┆ f64           ┆ f64       │
- ╞═══════════╪═══════════════╪══════════════════════╪═════════════╪═══════════════╪═══════════╡
- │ 0         ┆ 0             ┆ 2024-12-30T12:39:15Z ┆ 308.636545  ┆ 95043.997349  ┆ 49.777166 │
- │ 0         ┆ 1             ┆ 2024-12-30T12:44:15Z ┆ 302.245167  ┆ 104932.150155 ┆ 32.568715 │
- │ 1         ┆ 0             ┆ 2024-12-30T12:39:15Z ┆ 297.941843  ┆ 98940.542872  ┆ 57.707949 │
- │ 1         ┆ 1             ┆ 2024-12-30T12:44:15Z ┆ 288.303691  ┆ 100141.305292 ┆ 45.450946 │
- │ 1         ┆ 2             ┆ 2024-12-30T12:49:15Z ┆ 269.127444  ┆ 100052.257518 ┆ 70.401175 │
- │ 1         ┆ 3             ┆ 2024-12-30T12:54:15Z ┆ 299.002921  ┆ 95376.27857   ┆ 42.620882 │
- └───────────┴───────────────┴──────────────────────┴─────────────┴───────────────┴───────────┘
+ ┌──────────────┬──────────────────────┬─────────────┬───────────────┬───────────┐
+ │ _stations_id ┆ timestamp            ┆ temperature ┆ pressure      ┆ humidity  │
+ │ ---          ┆ ---                  ┆ ---         ┆ ---           ┆ ---       │
+ │ u64          ┆ str                  ┆ f64         ┆ f64           ┆ f64       │
+ ╞══════════════╪══════════════════════╪═════════════╪═══════════════╪═══════════╡
+ │ 0            ┆ 2024-12-30T12:39:15Z ┆ 308.636545  ┆ 95043.997349  ┆ 49.777166 │
+ │ 0            ┆ 2024-12-30T12:44:15Z ┆ 302.245167  ┆ 104932.150155 ┆ 32.568715 │
+ │ 1            ┆ 2024-12-30T12:39:15Z ┆ 297.941843  ┆ 98940.542872  ┆ 57.707949 │
+ │ 1            ┆ 2024-12-30T12:44:15Z ┆ 288.303691  ┆ 100141.305292 ┆ 45.450946 │
+ │ 1            ┆ 2024-12-30T12:49:15Z ┆ 269.127444  ┆ 100052.257518 ┆ 70.401175 │
+ │ 1            ┆ 2024-12-30T12:54:15Z ┆ 299.002921  ┆ 95376.27857   ┆ 42.620882 │
+ └──────────────┴──────────────────────┴─────────────┴───────────────┴───────────┘
 ```
 
 The `<station>` index in the `measurements` table links each measurement to its
