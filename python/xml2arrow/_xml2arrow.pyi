@@ -33,7 +33,7 @@ class XmlToArrowParser:
         """
 
     @staticmethod
-    def from_yaml_string(yaml: str) -> XmlToArrowParser:
+    def from_yaml_str(yaml: str) -> XmlToArrowParser:
         """Creates a parser from a YAML configuration string.
 
         The counterpart to the path constructor, for callers that already hold
@@ -41,6 +41,8 @@ class XmlToArrowParser:
         or built by a tool, or a test that would rather not touch the
         filesystem. The configuration is validated exactly as a file-loaded one
         is, so a parser obtained either way is equally trustworthy.
+
+        Named to match ``Config::from_yaml_str`` in the underlying Rust crate.
 
         Args:
             yaml: The YAML configuration.
@@ -54,7 +56,7 @@ class XmlToArrowParser:
             InvalidConfigError: If the configuration parses but is not valid.
 
         Example:
-            >>> parser = XmlToArrowParser.from_yaml_string('''
+            >>> parser = XmlToArrowParser.from_yaml_str('''
             ... tables:
             ...   - name: items
             ...     xml_path: /data

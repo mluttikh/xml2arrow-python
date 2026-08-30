@@ -1390,13 +1390,13 @@ tables:
         xml = b"<data><item><value>1</value></item><item><value>2</value></item></data>"
 
         from_file = XmlToArrowParser(config).parse(xml)
-        from_string = XmlToArrowParser.from_yaml_string(yaml).parse(xml)
+        from_string = XmlToArrowParser.from_yaml_str(yaml).parse(xml)
 
         assert from_file["items"] == from_string["items"]
 
     def test_repr_says_where_the_config_came_from(self) -> None:
         """No path exists, so __repr__ must not invent one."""
-        parser = XmlToArrowParser.from_yaml_string(
+        parser = XmlToArrowParser.from_yaml_str(
             """
 tables:
   - name: items
@@ -1410,12 +1410,12 @@ tables:
 
     def test_malformed_yaml_raises_yaml_parsing_error(self) -> None:
         with pytest.raises(YamlParsingError):
-            XmlToArrowParser.from_yaml_string("tables: [oh no: {")
+            XmlToArrowParser.from_yaml_str("tables: [oh no: {")
 
     def test_invalid_config_raises_invalid_config_error(self) -> None:
         """Validation runs here too: a field pointing outside its table."""
         with pytest.raises(InvalidConfigError):
-            XmlToArrowParser.from_yaml_string(
+            XmlToArrowParser.from_yaml_str(
                 """
 tables:
   - name: items
@@ -1452,7 +1452,7 @@ class TestConfigFeatures:
 
     def test_declared_row_gives_one_row_per_element(self) -> None:
         """`row:` replaces inferred boundaries, and says so in the config."""
-        parser = XmlToArrowParser.from_yaml_string(
+        parser = XmlToArrowParser.from_yaml_str(
             """
 tables:
   - name: stations
@@ -1472,7 +1472,7 @@ tables:
 
     def test_relative_field_paths_resolve_against_the_row(self) -> None:
         """`path:` is relative to the row element; the absolute form still works."""
-        relative = XmlToArrowParser.from_yaml_string(
+        relative = XmlToArrowParser.from_yaml_str(
             """
 tables:
   - name: stations
@@ -1482,7 +1482,7 @@ tables:
       - {name: id, path: "@id", data_type: Utf8}
 """
         )
-        absolute = XmlToArrowParser.from_yaml_string(
+        absolute = XmlToArrowParser.from_yaml_str(
             """
 tables:
   - name: stations
@@ -1502,7 +1502,7 @@ tables:
         The legacy positional `levels` column would report 0 for both stations
         here, silently attributing beta's measurement to alpha.
         """
-        parser = XmlToArrowParser.from_yaml_string(
+        parser = XmlToArrowParser.from_yaml_str(
             """
 tables:
   - name: stations
@@ -1526,7 +1526,7 @@ tables:
 
     def test_value_policies_apply(self) -> None:
         """A per-field policy opts out of one historical quirk at a time."""
-        parser = XmlToArrowParser.from_yaml_string(
+        parser = XmlToArrowParser.from_yaml_str(
             """
 tables:
   - name: items
@@ -1553,8 +1553,8 @@ tables:
 """
         xml = b"<data><item><s> hi </s></item></data>"
 
-        v1 = XmlToArrowParser.from_yaml_string(body).parse(xml)["items"]
-        v2 = XmlToArrowParser.from_yaml_string("version: 2\n" + body).parse(xml)["items"]
+        v1 = XmlToArrowParser.from_yaml_str(body).parse(xml)["items"]
+        v2 = XmlToArrowParser.from_yaml_str("version: 2\n" + body).parse(xml)["items"]
 
         assert v1.column("s").to_pylist() == [" hi "]
         assert v2.column("s").to_pylist() == ["hi"]
@@ -1562,7 +1562,7 @@ tables:
     def test_version_2_rejects_an_unmigrated_config(self) -> None:
         """The whole point of the assertion: it fails loudly when not met."""
         with pytest.raises(InvalidConfigError, match="version: 2"):
-            XmlToArrowParser.from_yaml_string(
+            XmlToArrowParser.from_yaml_str(
                 """
 version: 2
 tables:
