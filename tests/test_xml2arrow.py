@@ -1288,3 +1288,288 @@ def test_version_returns_string() -> None:
     # Version should follow semver pattern (at least major.minor.patch)
     parts = __version__.split(".")
     assert len(parts) >= 3, f"Version {__version__} should have at least 3 parts"
+
+
+def test_warnings_is_empty_for_a_config_with_nothing_to_flag(
+    tmp_path: Path,
+) -> None:
+    """A table that declares its row boundaries has nothing surprising to report."""
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        """
+tables:
+  - name: items
+    xml_path: /root/items
+    row: item
+    fields:
+      - {name: a, path: a, data_type: Int32}
+      - {name: b, path: b, data_type: Int32}
+"""
+    )
+    assert XmlToArrowParser(config).warnings() == []
+
+
+def test_warnings_reports_inferred_row_boundaries(tmp_path: Path) -> None:
+    """The lint that matters in practice: rows inferred from several children.
+
+    Without ``row:``, a row ends whenever *any* configured child of the table
+    element closes. Here ``title`` and ``created`` are both direct children of
+    ``/root/header``, so the table yields *two* half-filled rows per header
+    rather than one. The warning is what tells you that before the row counts
+    do.
+
+    Note the shape matters: fields nested one level deeper (a single ``<item>``
+    child holding them) have only one distinct child element and are correctly
+    not flagged.
+    """
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        """
+tables:
+  - name: header
+    xml_path: /root/header
+    levels: []
+    fields:
+      - {name: title, xml_path: /root/header/title, data_type: Int32}
+      - {name: created, xml_path: /root/header/created, data_type: Int32}
+"""
+    )
+    warnings = XmlToArrowParser(config).warnings()
+
+    assert len(warnings) == 1
+    assert isinstance(warnings[0], str)
+    # Names the table, so a config with several has an actionable message.
+    assert "header" in warnings[0]
+
+
+def test_warnings_does_not_change_parsing(tmp_path: Path) -> None:
+    """Lints are advisory: asking for them must not alter what a parse returns.
+
+    The config is the flagged shape, and the assertion on ``num_rows`` records
+    what the warning is warning *about*: one ``<header>`` holding two configured
+    child elements produces two half-filled rows, not one row with two columns.
+    """
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        """
+tables:
+  - name: header
+    xml_path: /root/header
+    levels: []
+    fields:
+      - {name: title, xml_path: /root/header/title, data_type: Int32, nullable: true}
+      - {name: created, xml_path: /root/header/created, data_type: Int32, nullable: true}
+"""
+    )
+    xml = b"<root><header><title>1</title><created>2</created></header></root>"
+
+    before = XmlToArrowParser(config).parse(xml)
+    parser = XmlToArrowParser(config)
+    assert parser.warnings()  # non-empty, and consumed
+    after = parser.parse(xml)
+
+    assert before["header"] == after["header"]
+    assert before["header"].num_rows == 2
+
+
+class TestFromYamlString:
+    """Constructing a parser from YAML held in memory rather than on disk."""
+
+    def test_matches_a_parser_built_from_the_same_file(self, tmp_path: Path) -> None:
+        """The two constructors must agree, or there are two sets of rules."""
+        yaml = """
+tables:
+  - name: items
+    xml_path: /data
+    row: item
+    fields:
+      - {name: value, path: value, data_type: Int32}
+"""
+        config = tmp_path / "config.yaml"
+        config.write_text(yaml)
+        xml = b"<data><item><value>1</value></item><item><value>2</value></item></data>"
+
+        from_file = XmlToArrowParser(config).parse(xml)
+        from_string = XmlToArrowParser.from_yaml_string(yaml).parse(xml)
+
+        assert from_file["items"] == from_string["items"]
+
+    def test_repr_says_where_the_config_came_from(self) -> None:
+        """No path exists, so __repr__ must not invent one."""
+        parser = XmlToArrowParser.from_yaml_string(
+            """
+tables:
+  - name: items
+    xml_path: /data
+    row: item
+    fields:
+      - {name: value, path: value, data_type: Int32}
+"""
+        )
+        assert repr(parser) == "XmlToArrowParser(<from YAML string>)"
+
+    def test_malformed_yaml_raises_yaml_parsing_error(self) -> None:
+        with pytest.raises(YamlParsingError):
+            XmlToArrowParser.from_yaml_string("tables: [oh no: {")
+
+    def test_invalid_config_raises_invalid_config_error(self) -> None:
+        """Validation runs here too: a field pointing outside its table."""
+        with pytest.raises(InvalidConfigError):
+            XmlToArrowParser.from_yaml_string(
+                """
+tables:
+  - name: items
+    xml_path: /data
+    fields:
+      - {name: value, xml_path: /elsewhere/value, data_type: Int32}
+"""
+            )
+
+
+class TestConfigFeatures:
+    """The configuration features added in xml2arrow 0.20.
+
+    These are config-only: they need no binding surface of their own, which is
+    exactly why they need tests here — nothing else would notice if a future
+    upgrade stopped honouring one.
+    """
+
+    STATIONS = b"""<report>
+      <stations>
+        <station id="alpha">
+          <measurements>
+            <m seq="1"><value>1.5</value></m>
+            <m seq="2"><value>2.5</value></m>
+          </measurements>
+        </station>
+        <station id="beta">
+          <measurements>
+            <m seq="3"><value>3.5</value></m>
+          </measurements>
+        </station>
+      </stations>
+    </report>"""
+
+    def test_declared_row_gives_one_row_per_element(self) -> None:
+        """`row:` replaces inferred boundaries, and says so in the config."""
+        parser = XmlToArrowParser.from_yaml_string(
+            """
+tables:
+  - name: stations
+    xml_path: /report/stations
+    row: station
+    fields:
+      - {name: id, path: "@id", data_type: Utf8}
+"""
+        )
+        batch = parser.parse(self.STATIONS)["stations"]
+        assert batch.num_rows == 2
+        assert batch.column("id").to_pylist() == ["alpha", "beta"]
+        # Declaring the row is what silences the row-boundary lint specifically.
+        # Other lints may still fire — this config trips the non-nullable-Utf8
+        # one — so assert on the concern rather than on an empty list.
+        assert not any("child element" in w for w in parser.warnings())
+
+    def test_relative_field_paths_resolve_against_the_row(self) -> None:
+        """`path:` is relative to the row element; the absolute form still works."""
+        relative = XmlToArrowParser.from_yaml_string(
+            """
+tables:
+  - name: stations
+    xml_path: /report/stations
+    row: station
+    fields:
+      - {name: id, path: "@id", data_type: Utf8}
+"""
+        )
+        absolute = XmlToArrowParser.from_yaml_string(
+            """
+tables:
+  - name: stations
+    xml_path: /report/stations
+    row: station
+    fields:
+      - {name: id, xml_path: /report/stations/station/@id, data_type: Utf8}
+"""
+        )
+        assert (
+            relative.parse(self.STATIONS)["stations"] == absolute.parse(self.STATIONS)["stations"]
+        )
+
+    def test_parent_link_is_a_real_join_key(self) -> None:
+        """`links:` produces a global ordinal, so a join is correct.
+
+        The legacy positional `levels` column would report 0 for both stations
+        here, silently attributing beta's measurement to alpha.
+        """
+        parser = XmlToArrowParser.from_yaml_string(
+            """
+tables:
+  - name: stations
+    xml_path: /report/stations
+    row: station
+    fields:
+      - {name: id, path: "@id", data_type: Utf8}
+  - name: measurements
+    xml_path: /report/stations/station/measurements
+    row: m
+    links:
+      - parent: stations
+    fields:
+      - {name: seq, path: "@seq", data_type: Int32}
+"""
+        )
+        tables = parser.parse(self.STATIONS)
+        assert tables["stations"].column("_id").to_pylist() == [0, 1]
+        # Two measurements under alpha (0), one under beta (1).
+        assert tables["measurements"].column("_stations_id").to_pylist() == [0, 0, 1]
+
+    def test_value_policies_apply(self) -> None:
+        """A per-field policy opts out of one historical quirk at a time."""
+        parser = XmlToArrowParser.from_yaml_string(
+            """
+tables:
+  - name: items
+    xml_path: /data
+    row: item
+    fields:
+      - {name: n, path: n, data_type: Int32, nullable: true, null_values: ["N/A"]}
+      - {name: s, path: s, data_type: Utf8, trim: true}
+"""
+        )
+        batch = parser.parse(b"<data><item><n>N/A</n><s> hi </s></item></data>")["items"]
+        assert batch.column("n").to_pylist() == [None]
+        assert batch.column("s").to_pylist() == ["hi"]
+
+    def test_version_2_changes_the_defaults(self) -> None:
+        """`version: 2` trims every type, where v1 leaves Utf8 as written."""
+        body = """
+tables:
+  - name: items
+    xml_path: /data
+    row: item
+    fields:
+      - {name: s, path: s, data_type: Utf8}
+"""
+        xml = b"<data><item><s> hi </s></item></data>"
+
+        v1 = XmlToArrowParser.from_yaml_string(body).parse(xml)["items"]
+        v2 = XmlToArrowParser.from_yaml_string("version: 2\n" + body).parse(xml)["items"]
+
+        assert v1.column("s").to_pylist() == [" hi "]
+        assert v2.column("s").to_pylist() == ["hi"]
+
+    def test_version_2_rejects_an_unmigrated_config(self) -> None:
+        """The whole point of the assertion: it fails loudly when not met."""
+        with pytest.raises(InvalidConfigError, match="version: 2"):
+            XmlToArrowParser.from_yaml_string(
+                """
+version: 2
+tables:
+  - name: items
+    xml_path: /data
+    levels: []
+    fields:
+      - {name: value, xml_path: /data/item/value, data_type: Int32}
+"""
+            )
