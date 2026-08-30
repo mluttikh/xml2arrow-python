@@ -167,9 +167,6 @@ jobs:
           fail_ci_if_error: false
 
   linux:
-    # Release artifacts only; PR/branch correctness signal comes from the
-    # test matrix, so skip these expensive builds outside tags and manual runs.
-    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -207,9 +204,6 @@ jobs:
           path: dist
 
   musllinux:
-    # Release artifacts only; PR/branch correctness signal comes from the
-    # test matrix, so skip these expensive builds outside tags and manual runs.
-    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -243,9 +237,6 @@ jobs:
           path: dist
 
   windows:
-    # Release artifacts only; PR/branch correctness signal comes from the
-    # test matrix, so skip these expensive builds outside tags and manual runs.
-    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -275,9 +266,6 @@ jobs:
           path: dist
 
   macos:
-    # Release artifacts only; PR/branch correctness signal comes from the
-    # test matrix, so skip these expensive builds outside tags and manual runs.
-    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -306,9 +294,6 @@ jobs:
           path: dist
 
   sdist:
-    # Release artifacts only; PR/branch correctness signal comes from the
-    # test matrix, so skip these expensive builds outside tags and manual runs.
-    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     needs: wheels-wanted
     if: needs.wheels-wanted.outputs.build == 'true'
