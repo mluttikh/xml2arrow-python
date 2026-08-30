@@ -9,8 +9,8 @@ name = "_xml2arrow"
 crate-type = ["cdylib"]
 
 [dependencies]
-# Bump to whichever release carries owned streams (`Parser::into_batches`)
-# once it is published; the patch below covers local development until then.
+# 0.20 is not on crates.io yet; the patch below resolves it from the
+# xml2arrow `develop` branch. Both are removed together at release time.
 xml2arrow = { version = "0.20.0", features = ["python"] }
 arrow = { version = "59.0.0", features = ["pyarrow"] }
 
@@ -20,12 +20,33 @@ features = ["extension-module", "abi3-py310"]
 
 # Wheel builds go through this profile (maturin build --release); the
 # size/speed win is worth the slower release compile.
-# Build against the local checkout until the release carrying owned streams is
-# published. Remove before building a wheel: path patches do not ship in sdists,
-# so leaving it in fails the build loudly rather than resolving to the wrong
-# version silently.
+# --- Unreleased dependency -------------------------------------------------
+#
+# This branch tracks xml2arrow's `develop`, which is not published. The patch
+# is by *git branch* rather than by path, deliberately:
+#
+# - a path patch cannot resolve in CI, which checks out one repository, so the
+#   build only ever worked on a machine that happened to have the sibling
+#   checkout;
+# - and it silently follows whatever branch that checkout is on, so switching
+#   the other repository changes what this one is built against with nothing
+#   in the output saying so.
+#
+# `Cargo.lock` pins the exact commit, so which xml2arrow this was tested
+# against is a reviewable line in the diff, and moving forward is a deliberate
+# `cargo update -p xml2arrow`.
+#
+# To build against uncommitted local changes instead, put a path patch in
+# `.cargo/config.toml` (gitignored) — it takes precedence over this one:
+#
+#     [patch.crates-io]
+#     xml2arrow = { path = "../xml2arrow" }
+#
+# At release: delete this whole block and set the dependency to the published
+# version. CI rejects a committed `path =` patch, and rejects any patch at all
+# on `main` or a tag, because neither can be published.
 [patch.crates-io]
-xml2arrow = { path = "../xml2arrow" }
+xml2arrow = { git = "https://github.com/mluttikh/xml2arrow.git", branch = "develop" }
 
 [profile.release]
 lto = true

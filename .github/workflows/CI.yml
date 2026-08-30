@@ -10,6 +10,7 @@ on:
     branches:
       - main
       - master
+      - develop
     tags:
       - "*"
   pull_request:
@@ -19,6 +20,39 @@ permissions:
   contents: read
 
 jobs:
+  # Two ways the dependency wiring can be wrong, both of which build fine on
+  # the machine that introduced them and fail for everyone else.
+  manifest:
+    name: Manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A path patch resolves only on a machine that happens to have the
+      # sibling checkout, and silently follows whatever branch it is on. The
+      # `develop` branch patches xml2arrow by git ref instead.
+      - name: Reject a path patch
+        run: |
+          if grep -qE '^\s*xml2arrow\s*=.*\bpath\s*=' Cargo.toml; then
+            echo "::error file=Cargo.toml::[patch.crates-io] uses a local path."
+            echo "A path patch cannot resolve in CI and silently follows whatever"
+            echo "branch the sibling checkout is on. Patch by git ref instead, or"
+            echo "put the path override in .cargo/config.toml, which is gitignored."
+            exit 1
+          fi
+
+      # Neither a git nor a path patch survives packaging, so a release built
+      # with one would silently be built against something else.
+      - name: Reject any patch on main or a tag
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+        run: |
+          if grep -q '^\[patch\.' Cargo.toml; then
+            echo "::error file=Cargo.toml::[patch] present on a release ref."
+            echo "Patches do not ship in an sdist. Remove the block and depend on"
+            echo "the published version before merging to main or tagging."
+            exit 1
+          fi
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

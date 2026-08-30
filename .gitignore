@@ -73,3 +73,5 @@ docs/_build/
 
 # Jupyter notebook
 .ipynb_checkpoints
+# Local dependency overrides (see the patch note in Cargo.toml)
+.cargo/
