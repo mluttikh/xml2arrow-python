@@ -173,6 +173,29 @@ class XmlToArrowParser:
                 (structural tables — empty ``fields`` — produce no output).
         """
 
+    def warnings(self) -> list[str]:
+        """Returns advisory warnings about the configuration.
+
+        These are configurations that are *valid* but commonly surprising —
+        most often a table whose row boundaries are inferred from more than one
+        child element, which yields one partially-filled row per child rather
+        than one row per record. That rule depends on which fields happen to be
+        configured, so adding a column can change a table's row count.
+
+        Warnings never change how a document parses, and this package never
+        prints them: what to do with them is your decision. Logging them at
+        startup is the usual choice.
+
+        Returns:
+            One message per finding, in configuration order. Empty when there
+            is nothing to flag.
+
+        Example:
+            >>> parser = XmlToArrowParser("config.yaml")
+            >>> for warning in parser.warnings():
+            ...     logging.warning("xml2arrow config: %s", warning)
+        """
+
     def __repr__(self) -> str: ...
 
 @final

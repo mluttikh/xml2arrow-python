@@ -326,6 +326,39 @@ impl XmlToArrowParser {
         }
     }
 
+    /// Returns advisory warnings about the configuration, as a list of
+    /// human-readable strings.
+    ///
+    /// These are configurations that are *valid* but commonly surprising — most
+    /// often a table whose row boundaries are inferred from more than one child
+    /// element, which yields one partially-filled row per child rather than one
+    /// row per record. That rule depends on which fields happen to be
+    /// configured, so adding a column can change a table's row count.
+    ///
+    /// The list is empty for a configuration with nothing to flag. Warnings
+    /// never change how a document parses, and the library never prints them:
+    /// what to do with them is the caller's decision.
+    ///
+    /// Returns:
+    ///     list[str]: One message per finding, in configuration order.
+    ///
+    /// Example:
+    ///     >>> parser = XmlToArrowParser("config.yaml")
+    ///     >>> for warning in parser.warnings():
+    ///     ...     logging.warning("xml2arrow config: %s", warning)
+    pub fn warnings(&self) -> Vec<String> {
+        // Rendered to strings rather than exposed structurally: upstream's
+        // `Lint` is `#[non_exhaustive]` and gains variants in minor releases,
+        // so a structured mirror here would either fall behind or force a
+        // binding change for every new lint. The `Display` text is what the
+        // upstream documentation directs hosts to log.
+        self.parser
+            .warnings()
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "XmlToArrowParser(config_path='{}')",

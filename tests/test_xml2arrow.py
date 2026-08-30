@@ -1288,3 +1288,85 @@ def test_version_returns_string() -> None:
     # Version should follow semver pattern (at least major.minor.patch)
     parts = __version__.split(".")
     assert len(parts) >= 3, f"Version {__version__} should have at least 3 parts"
+
+
+def test_warnings_is_empty_for_a_config_with_nothing_to_flag(
+    tmp_path: Path,
+) -> None:
+    """A table that declares its row boundaries has nothing surprising to report."""
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        """
+tables:
+  - name: items
+    xml_path: /root/items
+    row: item
+    fields:
+      - {name: a, path: a, data_type: Int32}
+      - {name: b, path: b, data_type: Int32}
+"""
+    )
+    assert XmlToArrowParser(config).warnings() == []
+
+
+def test_warnings_reports_inferred_row_boundaries(tmp_path: Path) -> None:
+    """The lint that matters in practice: rows inferred from several children.
+
+    Without ``row:``, a row ends whenever *any* configured child of the table
+    element closes. Here ``title`` and ``created`` are both direct children of
+    ``/root/header``, so the table yields *two* half-filled rows per header
+    rather than one. The warning is what tells you that before the row counts
+    do.
+
+    Note the shape matters: fields nested one level deeper (a single ``<item>``
+    child holding them) have only one distinct child element and are correctly
+    not flagged.
+    """
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        """
+tables:
+  - name: header
+    xml_path: /root/header
+    levels: []
+    fields:
+      - {name: title, xml_path: /root/header/title, data_type: Int32}
+      - {name: created, xml_path: /root/header/created, data_type: Int32}
+"""
+    )
+    warnings = XmlToArrowParser(config).warnings()
+
+    assert len(warnings) == 1
+    assert isinstance(warnings[0], str)
+    # Names the table, so a config with several has an actionable message.
+    assert "header" in warnings[0]
+
+
+def test_warnings_does_not_change_parsing(tmp_path: Path) -> None:
+    """Lints are advisory: asking for them must not alter what a parse returns.
+
+    The config is the flagged shape, and the assertion on ``num_rows`` records
+    what the warning is warning *about*: one ``<header>`` holding two configured
+    child elements produces two half-filled rows, not one row with two columns.
+    """
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        """
+tables:
+  - name: header
+    xml_path: /root/header
+    levels: []
+    fields:
+      - {name: title, xml_path: /root/header/title, data_type: Int32, nullable: true}
+      - {name: created, xml_path: /root/header/created, data_type: Int32, nullable: true}
+"""
+    )
+    xml = b"<root><header><title>1</title><created>2</created></header></root>"
+
+    before = XmlToArrowParser(config).parse(xml)
+    parser = XmlToArrowParser(config)
+    assert parser.warnings()  # non-empty, and consumed
+    after = parser.parse(xml)
+
+    assert before["header"] == after["header"]
+    assert before["header"].num_rows == 2
