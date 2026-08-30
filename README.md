@@ -49,30 +49,173 @@ The YAML configuration defines which parts of the XML document become tables and
 how their fields are typed. The full schema is:
 
 ```yaml
+version: 2                     # Optional. Asserts the config is fully migrated —
+                               # every table declares `row:` and uses `links:`
+                               # rather than `levels:`, every field uses `path:`
+                               # — and in exchange takes the defaults 1.0 will
+                               # make mandatory. Omitted means today's behavior.
+defaults:                      # Optional. Value policies applied to every field
+  trim: <true|false>           # that does not set its own; same keys as a
+  on_missing: <policy>         # field's, listed under `fields:` below.
+  on_invalid: <policy>
+  on_repeat: <policy>
+  null_values: [<str>]
 parser_options:
   trim_text: <true|false>      # Trim whitespace from text nodes (default: false)
   stop_at_paths: [<xml_path>]  # Stop parsing after these closing tags (optional,
                                # useful for reading only a file header)
+  strip_namespaces: <bool>     # Strip ns: prefixes before matching (default: true).
+                               # Set false to match raw qualified names and skip
+                               # the per-name prefix scan (~4-7% faster); paths must
+                               # then spell out any prefix. Free for prefix-free XML.
+  allow_truncated_input: <bool> # Accept input that ends mid-element (default: false).
+                               # By default a truncated document is an error rather
+                               # than a silently short result — see "Security &
+                               # trust model". Enable only for recovery tooling.
+  error_on_unmatched_fields: <bool>  # Fail if a configured field never matched
+                               # anything in the document (default: false). Catches
+                               # misspelled xml_paths, whose symptom is otherwise a
+                               # silently all-null column. Note that stop_at_paths
+                               # leaves everything below the stop path unmatched, so
+                               # the two options pull against each other.
+  max_value_bytes: <number>    # Cap on the bytes a single field value may accumulate
+                               # across text/CDATA/entity events (default: unlimited).
 tables:
   - name: <table_name>         # Name of the resulting PyArrow RecordBatch
     xml_path: <xml_path>       # Path to the element whose children are rows.
                                # Use "/" to treat the whole document as one row.
-    levels: [<level>, ...]     # Parent-link index columns — see "Nested tables"
+    row: <element>             # Which element finalizes a row (optional).
+                               # Omitted: inferred — a row ends whenever ANY
+                               #   configured direct child of xml_path closes,
+                               #   so two configured children yield two
+                               #   half-filled rows per container.
+                               # ".": one row per xml_path element itself —
+                               #   what metadata tables usually mean.
+                               # "name" / "a/b": relative to xml_path.
+                               # "/a/b/c": absolute (a LEADING SLASH is what
+                               #   makes it absolute; "a/b" is still relative).
+    levels: [<level>, ...]     # Parent-link index columns — see "Nested tables".
+                               # Optional; replaced by `links:` below.
+    links:                     # Declared relationships (optional; not with levels)
+      - parent: <table>        #   uint64 join key → <table>._id
+        name: <column>         #   default: _<table>_id
+      - index_of: <path>       #   uint32 positional ordinal (NOT a key).
+        name: <column>         #   Must name an enclosing table's ROW element,
+                               #   not its xml_path. Default column name:
+                               #   <element>_idx. Same value as <level>.
+    row_id: <name|false>       # This table's own key column. Defaults to `_id`
+                               # exactly when another table links to it.
     fields:
-      - name: <field_name>     # Column name
-        xml_path: <field_path> # Path to the element or attribute holding the value.
-                               # Prefix the last segment with @ for attributes
-                               # (e.g. /library/book/@id)
+      - name: <field_name>     # Arrow column name
+        path: <field_path>     # Where the value lives. Same rule as `row:`:
+                               #   "/a/b/c" is absolute (LEADING SLASH),
+                               #   "v" / "sensor/@id" is relative to the row
+                               #     element, and needs `row:` on the table.
+                               # Prefix the last segment with @ for attributes.
+        xml_path: <field_path> # The older name for the same thing, absolute
+                               # only. Set exactly one of `path`/`xml_path`;
+                               # `xml_path` is removed in 1.0.
         data_type: <type>      # Arrow data type — see supported types below
         nullable: <true|false> # Whether the field can be null (default: false)
-                               # If false, missing/empty tags cause a ParseError.
+                               # If false, a missing/empty value is an error —
+                               # except Utf8 fields, which yield "" (see below)
+        trim: <true|false>     # Strip surrounding whitespace (optional).
+                               # Default: numeric/boolean trim, Utf8 does not.
+        on_missing: <policy>   # error | null | empty — what an absent or blank
+                               # value becomes. Default depends on the type:
+                               # nullable -> null, non-nullable Utf8 -> "",
+                               # anything else -> error.
+        on_invalid: <policy>   # error | null — what an unparseable value becomes
+                               # (default: error).
+        on_repeat: <policy>    # error | first | last — what a repeated element
+                               # does (default: error).
+        null_values: [<str>]   # Literals that count as missing ("N/A", "-").
         scale: <number>        # Multiply float values by this factor (optional)
         offset: <number>       # Add this value to float values after scaling (optional)
                                # value = (value * scale) + offset
 ```
 
+**Declaring rows (`row:`).** Without it, row boundaries are *inferred* from
+whichever fields happen to be configured — so adding a field can change a
+table's row count, and a metadata table with three fields produces three
+one-third-filled rows instead of one. `row:` states the boundary instead:
+
+```yaml
+tables:
+  - name: header
+    xml_path: /report/header
+    row: "."                   # one row per <header>, holding all three fields
+    fields: [title, created, version]   # (abbreviated)
+```
+
+It is opt-in per table, and it changes nothing else: `levels`, absolute field
+paths and scoping all behave as before, and a table that omits `row:` keeps the
+inferred rule even when a sibling table declares one. `Config::lint()` reports
+tables whose boundaries are inferred from more than one child element, with the
+suggested `row:` line in the message — see [Check a config for surprises](#4-check-a-config-for-surprises).
+
+**Relative field paths.** Once a table declares `row:`, its fields can be
+written relative to that row element, which removes the repetition of spelling
+the full path on every column:
+
+```yaml
+tables:
+  - name: readings
+    xml_path: /report/stations/station/readings
+    row: reading
+    fields:
+      - {name: seq,   path: "@seq",         data_type: Int32}
+      - {name: value, path: value,          data_type: Int32}
+      - {name: unit,  path: sensor/@unit,   data_type: Utf8}
+```
+
+`path` and `xml_path` are two spellings of one location and compile to the same
+node, so switching an absolute `xml_path:` to `path:` is a key rename with no
+output change. Set exactly one of them per field.
+
+**Declared links (`links:`).** `levels` names *labels* and takes its values
+positionally; `links:` names the relationship, which turns a mismatch into a
+load-time error and adds a real join key. The two are compared, with what
+each produces, in [Linking nested tables](#2-linking-nested-tables) below.
+
+**Value policies.** Every policy above is optional and **absent means current
+behavior**, including the type-dependent quirks — setting one opts out of a
+specific quirk rather than switching engines. A `defaults:` block at the top of
+the config applies them to every field that sets none:
+
+```yaml
+defaults:
+  trim: true
+tables:
+  - name: items
+    xml_path: /report
+    row: item
+    fields:
+      - {name: n, path: n, data_type: Int32, nullable: true, on_invalid: null}
+      - {name: v, path: v, data_type: Utf8, nullable: true, on_repeat: last}
+```
+
+The most useful is `on_missing`, because the default is genuinely surprising: a
+missing non-nullable `Utf8` field yields `""` while a missing non-nullable
+number is an error. `on_missing: error` makes a column behave the same whatever
+its type.
+
+**`version: 2`.** Every key above is independently optional, so a config can be
+half migrated indefinitely and never say so. `version: 2` is how it says so — an
+assertion, not a switch. Declaring it requires the config to be fully migrated
+(every table declares `row:`, none uses `levels:`, every field uses `path:`, and
+a nested table declares its `links:`), and anything left over is rejected at load
+with a message naming it.
+
+In exchange the config opts into the two defaults 1.0 will make mandatory, both
+of which today depend on a column's Arrow type rather than on intent: `trim` is
+on for every type, and a missing non-nullable value is an error whatever the
+type. Per-field policies still win, and deleting the line reverts everything.
+See `MIGRATION.md` in the [xml2arrow repository](https://github.com/mluttikh/xml2arrow)
+for the full migration guide.
+
 **Supported data types:** `Boolean`, `Int8`, `UInt8`, `Int16`, `UInt16`, `Int32`,
-`UInt32`, `Int64`, `UInt64`, `Float32`, `Float64`, `Utf8`
+`uint32`, `Int64`, `uint64`, `Float32`, `Float64`, `Utf8`
 
 `Boolean` fields accept (case-insensitively): `true`, `false`, `1`, `0`, `yes`,
 `no`, `on`, `off`, `t`, `f`, `y`, `n`.
@@ -215,7 +358,42 @@ and any other tool in the Arrow ecosystem.
 >     ...
 > ```
 
-### 4. Streaming documents too large for memory
+### 4. Check a config for surprises
+
+`XmlToArrowParser(...)` rejects configurations that cannot work. `warnings()`
+reports the next tier: configurations that are valid but whose behavior
+commonly surprises — most importantly, tables whose **row boundaries are
+inferred** from several different child elements, which yield one
+partially-filled row per child rather than one row per record.
+
+```python
+import logging
+
+parser = XmlToArrowParser("stations.yaml")
+for warning in parser.warnings():
+    logging.warning("xml2arrow config: %s", warning)
+```
+
+```text
+Table 'header' (xml_path /report/header) has 2 distinct configured child
+elements (title, created); row boundaries are inferred, so this table produces
+2 partially-filled rows per <header> rather than one. Declare `row:` to fix it:
+`row: "."` for one row per <header>, or `row: <element>` to name the repeating
+element
+```
+
+Warnings are plain strings, never printed by the package, and purely advisory:
+asking for them cannot change how a document parses. The inferred-boundary
+warning carries its own fix and goes quiet once you apply it.
+
+It is worth running once against a real configuration before trusting its row
+counts — it is the cheapest signal available, and needs no document.
+
+For the runtime counterpart — "this field matched nothing in *this document*" —
+set `parser_options.error_on_unmatched_fields`, which reports every offending
+field at once.
+
+### 5. Streaming documents too large for memory
 
 `parse()` materializes every table in full, so peak memory grows with the
 document. For XML files that don't fit in memory (multi-GB exports,
