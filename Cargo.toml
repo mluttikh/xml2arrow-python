@@ -9,7 +9,9 @@ name = "_xml2arrow"
 crate-type = ["cdylib"]
 
 [dependencies]
-xml2arrow = { version = "0.19.0", features = ["python"] }
+# Bump to whichever release carries owned streams (`Parser::into_batches`)
+# once it is published; the patch below covers local development until then.
+xml2arrow = { version = "0.20.0", features = ["python"] }
 arrow = { version = "59.0.0", features = ["pyarrow"] }
 
 [dependencies.pyo3]
@@ -18,6 +20,13 @@ features = ["extension-module", "abi3-py310"]
 
 # Wheel builds go through this profile (maturin build --release); the
 # size/speed win is worth the slower release compile.
+# Build against the local checkout until the release carrying owned streams is
+# published. Remove before building a wheel: path patches do not ship in sdists,
+# so leaving it in fails the build loudly rather than resolving to the wrong
+# version silently.
+[patch.crates-io]
+xml2arrow = { path = "../xml2arrow" }
+
 [profile.release]
 lto = true
 codegen-units = 1

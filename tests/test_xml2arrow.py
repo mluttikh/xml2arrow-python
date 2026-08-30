@@ -1002,8 +1002,14 @@ tables:
         parser.parse(xml_path)
 
 
-def test_non_xml_input_produces_empty_result(tmp_path: Path) -> None:
-    """Test that completely non-XML input is handled gracefully with an empty result."""
+def test_non_xml_input_is_rejected(tmp_path: Path) -> None:
+    """Garbage input is an error, not an empty table.
+
+    ``<<<not xml at all>>>`` parses as an element that never closes, so the
+    document is truncated. Returning an empty table for it would be
+    indistinguishable from a valid document that happened to contain no rows —
+    the silent-data-loss shape this parser refuses.
+    """
     config_yaml = """
 tables:
   - name: test_table
@@ -1022,9 +1028,8 @@ tables:
     xml_path.write_text("<<<not xml at all>>>")
 
     parser = XmlToArrowParser(config_path)
-    result = parser.parse(xml_path)
-
-    assert result["test_table"].num_rows == 0
+    with pytest.raises(XmlParsingError, match="Truncated document"):
+        parser.parse(xml_path)
 
 
 def test_parse_bytes_input(stations_parser: XmlToArrowParser, test_data_dir: Path) -> None:
