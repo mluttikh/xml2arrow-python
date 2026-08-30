@@ -377,7 +377,7 @@ import polars as pl
 from xml2arrow import XmlToArrowParser
 
 parser = XmlToArrowParser("stations.yaml")
-# Or XmlToArrowParser.from_yaml_string(yaml) when the config is already in
+# Or XmlToArrowParser.from_yaml_str(yaml) when the config is already in
 # memory — an embedded default, one fetched from a service, or one built by a
 # tool. It is validated exactly as a file-loaded config is.
 record_batches = parser.parse("stations.xml")

@@ -183,6 +183,10 @@ impl XmlToArrowParser {
     /// filesystem. The configuration is validated exactly as a file-loaded one
     /// is, so a parser obtained either way is equally trustworthy.
     ///
+    /// Named to match upstream's `Config::from_yaml_str`, which it delegates
+    /// to — the two APIs are read side by side often enough that a spelling
+    /// difference would be one more thing to remember.
+    ///
     /// Args:
     ///     yaml (str): The YAML configuration.
     ///
@@ -194,7 +198,7 @@ impl XmlToArrowParser {
     ///         describe a configuration.
     ///     InvalidConfigError: If the configuration parses but is not valid.
     #[staticmethod]
-    pub fn from_yaml_string(yaml: &str) -> PyResult<Self> {
+    pub fn from_yaml_str(yaml: &str) -> PyResult<Self> {
         let config = Config::from_yaml_str(yaml)?;
         Ok(XmlToArrowParser {
             config_path: None,
