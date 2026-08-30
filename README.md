@@ -432,6 +432,27 @@ with pq.ParquetWriter("out.parquet", reader.schema) as writer:
         writer.write_batch(batch)
 ```
 
+### 6. Parsers are picklable
+
+A parser can cross a process boundary, so it works directly with
+`multiprocessing` and `concurrent.futures.ProcessPoolExecutor`:
+
+```python
+from concurrent.futures import ProcessPoolExecutor
+
+parser = XmlToArrowParser("stations.yaml")
+with ProcessPoolExecutor() as pool:
+    for tables in pool.map(parser.parse, ["a.xml", "b.xml", "c.xml"]):
+        ...
+```
+
+What crosses is the *configuration*, not the compiled parser: a path-built
+parser re-reads its file in the worker, and one built with `from_yaml_str`
+carries the YAML inside the pickle. Each worker therefore compiles the config
+once, and a path-built parser needs that file to exist on the worker's
+filesystem.
+
+
 ## Example
 
 This example extracts meteorological station data from a nested XML document into
