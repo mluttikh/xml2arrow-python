@@ -1298,6 +1298,28 @@ def test_parse_buffer_protocol_inputs(
         assert from_buffer[name].to_pydict() == from_bytes[name].to_pydict()
 
 
+@pytest.mark.parametrize(
+    "wrap",
+    [
+        pytest.param(lambda _data: array.array("d", [1.5, 2.5]), id="wrong-itemsize"),
+        pytest.param(lambda data: memoryview(data)[::2], id="non-contiguous"),
+    ],
+)
+def test_parse_rejects_buffers_that_are_not_contiguous_bytes(
+    stations_parser: XmlToArrowParser, test_data_dir: Path, wrap
+) -> None:
+    """A buffer only means "these bytes" if its elements are bytes, in order.
+
+    Without this check the failure is silent rather than loud: an ``array('d')``
+    exports a buffer as happily as an ``array('B')``, and its raw bytes contain
+    no ``<``, so the parse succeeds and returns *zero rows*. An empty result
+    for a wrong input is the one outcome worth ruling out.
+    """
+    data = (test_data_dir / "stations.xml").read_bytes()
+    with pytest.raises(TypeError, match="contiguous buffer of bytes"):
+        stations_parser.parse(wrap(data))
+
+
 def test_parse_mmap_input(stations_parser: XmlToArrowParser, test_data_dir: Path) -> None:
     """Test that an mmap of the XML file parses via the streaming path."""
     import mmap
@@ -1576,7 +1598,7 @@ tables:
       - {name: value, path: value, data_type: Int32}
 """
         )
-        assert repr(parser) == "XmlToArrowParser(<from YAML string>)"
+        assert repr(parser) == "XmlToArrowParser(from_yaml_str=...)"
 
     def test_malformed_yaml_raises_yaml_parsing_error(self) -> None:
         with pytest.raises(YamlParsingError):

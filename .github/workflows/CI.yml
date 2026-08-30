@@ -156,7 +156,9 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: |
           pip install mypy
-          python -m mypy.stubtest xml2arrow._xml2arrow
+          # Without the config, stubtest stops at pyarrow's missing stubs
+          # before checking anything of ours.
+          python -m mypy.stubtest --mypy-config-file pyproject.toml xml2arrow._xml2arrow
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         uses: codecov/codecov-action@v4

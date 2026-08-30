@@ -129,6 +129,23 @@ impl<'a, 'py> FromPyObject<'a, 'py> for XmlInput<'py> {
         // protocol is outside the abi3-py310 limited API, so zero-copy here
         // must wait until the wheel's Python floor moves to 3.11.
         if let Ok(view) = PyMemoryView::from(ob) {
+            // A buffer only means "these bytes" when its elements *are*
+            // bytes and they are laid out in order. A `float64` array
+            // exports a buffer just as happily as a `uint8` one, and
+            // `tobytes()` would hand us its raw representation: no `<`
+            // anywhere, so the parse succeeds and returns zero rows. An
+            // empty result for a wrong input is the one outcome worth
+            // ruling out, so both properties are checked rather than
+            // assumed.
+            let itemsize: usize = view.getattr(intern!(py, "itemsize"))?.extract()?;
+            let contiguous: bool = view.getattr(intern!(py, "c_contiguous"))?.extract()?;
+            if itemsize != 1 || !contiguous {
+                return Err(PyTypeError::new_err(format!(
+                    "parse() needs a contiguous buffer of bytes, but got one with \
+                     itemsize {itemsize} (contiguous: {contiguous}). Convert it \
+                     first, e.g. with .tobytes() or .astype('uint8')"
+                )));
+            }
             let bytes = view.call_method0(intern!(py, "tobytes"))?;
             return Ok(Self::Bytes(bytes.cast_into().map_err(PyErr::from)?));
         }
@@ -478,7 +495,10 @@ impl XmlToArrowParser {
             ConfigSource::Path(path) => {
                 format!("XmlToArrowParser(config_path='{}')", path.to_string_lossy())
             }
-            ConfigSource::Yaml(_) => "XmlToArrowParser(<from YAML string>)".to_string(),
+            // Shaped like a call, as the path form is: a repr should read
+            // like the expression that rebuilds the object, and this one
+            // names the constructor that would.
+            ConfigSource::Yaml(_) => "XmlToArrowParser(from_yaml_str=...)".to_string(),
         }
     }
 }

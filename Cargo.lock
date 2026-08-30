@@ -9,7 +9,6 @@ dependencies = [
  "arrow",
  "pyo3",
  "xml2arrow",
- "yaml_serde",
 ]
 
 [[package]]

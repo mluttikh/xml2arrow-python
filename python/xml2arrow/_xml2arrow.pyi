@@ -5,6 +5,7 @@ from pyarrow import RecordBatch, RecordBatchReader, Schema
 
 __all__ = [
     "XmlToArrowParser",
+    "RecordBatchStream",
     "Xml2ArrowError",
     "XmlParsingError",
     "YamlParsingError",
