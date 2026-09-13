@@ -2,6 +2,7 @@
 
 from . import exceptions
 from ._xml2arrow import (
+    Conversion,
     RecordBatchStream,
     Xml2ArrowError,
     XmlToArrowParser,
@@ -10,4 +11,10 @@ from ._xml2arrow import (
 
 __version__: str = _get_version()
 
-__all__ = ["RecordBatchStream", "XmlToArrowParser", "Xml2ArrowError", "exceptions"]
+__all__ = [
+    "Conversion",
+    "RecordBatchStream",
+    "XmlToArrowParser",
+    "Xml2ArrowError",
+    "exceptions",
+]

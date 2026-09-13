@@ -89,7 +89,8 @@ configuration is shared with the Rust crate, so the reference lives there.
 > [Configuration format version 1](https://github.com/mluttikh/xml2arrow/blob/develop/docs/configuration-v1.md)
 > documents it, and
 > [Migrating to configuration format version 2](https://github.com/mluttikh/xml2arrow/blob/develop/docs/migrating-to-version-2.md)
-> moves a config across in four steps.
+> moves a config across in four steps, which `parser.to_version_2()` can take for
+> you without changing its output.
 
 ### 2. Parse the XML
 
@@ -166,6 +167,21 @@ A version 1 config, one that does not declare `version: 2`, also gets a
 **deprecation notice** that lists exactly what `version: 2` would still reject
 in that config. See
 [Migrating to configuration format version 2](https://github.com/mluttikh/xml2arrow/blob/develop/docs/migrating-to-version-2.md).
+
+`to_version_2()` converts the configuration for you, without changing what it
+produces, and lists the parts it leaves for you to decide:
+
+```python
+from pathlib import Path
+
+conversion = XmlToArrowParser("config.yaml").to_version_2()
+for part in conversion.unconverted:
+    print("left for you:", part)
+Path("config-v2.yaml").write_text(conversion.yaml)
+```
+
+The converted configuration declares `version: 2` once nothing is left. The
+YAML is written fresh, without the original's comments.
 
 It is worth running once against a real configuration before trusting its row
 counts — it is the cheapest signal available, and needs no document.

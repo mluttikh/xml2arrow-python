@@ -13,6 +13,9 @@ crate-type = ["cdylib"]
 # xml2arrow `develop` branch. Both are removed together at release time.
 xml2arrow = { version = "0.20.0", features = ["python"] }
 arrow = { version = "59.0.0", features = ["pyarrow"] }
+# Writes `to_version_2`'s converted config back out as YAML. The same crate
+# xml2arrow reads configs with, so a written config reads back identically.
+yaml_serde = "0.10"
 
 [dependencies.pyo3]
 version = "0.28"

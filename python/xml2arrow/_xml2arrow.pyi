@@ -6,6 +6,7 @@ from pyarrow import RecordBatch, RecordBatchReader, Schema
 __all__ = [
     "XmlToArrowParser",
     "RecordBatchStream",
+    "Conversion",
     "Xml2ArrowError",
     "XmlParsingError",
     "YamlParsingError",
@@ -248,6 +249,54 @@ class XmlToArrowParser:
             >>> for warning in parser.warnings():
             ...     logging.warning("xml2arrow config: %s", warning)
         """
+
+    def to_version_2(self) -> Conversion:
+        """Converts the configuration to format version 2, without changing what it produces.
+
+        Every document parses to the same tables, columns, values and errors
+        under the converted configuration as under this one. A part that
+        version 2 can only express by changing the output is left as it was and
+        listed in ``unconverted``; the converted configuration declares
+        ``version: 2`` only when that list is empty. A configuration that
+        already declares ``version: 2`` comes back unchanged.
+
+        The YAML is written fresh: the original's comments and layout are not
+        kept, and keys left at their defaults are omitted.
+
+        Returns:
+            The converted configuration as YAML, and the parts left for you to
+            decide.
+
+        Example:
+            >>> conversion = XmlToArrowParser("config.yaml").to_version_2()
+            >>> for part in conversion.unconverted:
+            ...     print("left for you:", part)
+            >>> Path("config-v2.yaml").write_text(conversion.yaml)
+        """
+
+    def __repr__(self) -> str: ...
+
+@final
+class Conversion:
+    """The result of ``XmlToArrowParser.to_version_2``.
+
+    Holds text rather than a parser, because the point of converting is to
+    write the result down and review it. ``XmlToArrowParser.from_yaml_str``
+    turns it into a parser when one is wanted.
+    """
+
+    @property
+    def yaml(self) -> str:
+        """The converted configuration, as YAML.
+
+        It declares ``version: 2`` when ``unconverted`` is empty. Otherwise
+        every other part is converted, and the configuration keeps its version
+        until the listed parts are resolved.
+        """
+
+    @property
+    def unconverted(self) -> list[str]:
+        """The parts that could not be converted without changing the output, one message each."""
 
     def __repr__(self) -> str: ...
 
