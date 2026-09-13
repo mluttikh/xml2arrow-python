@@ -58,6 +58,19 @@ jobs:
             exit 1
           fi
 
+      # While this branch tracks xml2arrow's `develop`, the README links to the
+      # configuration docs there, because they do not exist on its `main` yet.
+      # PyPI shows the README of the release, and `develop` moves on, so a
+      # release must link to `main` instead.
+      - name: Reject README links to xml2arrow develop on main or a tag
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+        run: |
+          if grep -n 'mluttikh/xml2arrow/blob/develop/' README.md; then
+            echo "::error file=README.md::README links to xml2arrow's develop branch."
+            echo "Point these links at blob/main before merging to main or tagging."
+            exit 1
+          fi
+
   # Wheels are only worth building where they could actually be released.
   # On `develop` the manifest carries a `[patch]` for an unpublished
   # xml2arrow, so every wheel built there is unreleasable by construction —

@@ -69,6 +69,7 @@ class XmlToArrowParser:
 
         Example:
             >>> parser = XmlToArrowParser.from_yaml_str('''
+            ... version: 2
             ... tables:
             ...   - name: items
             ...     xml_path: /data
@@ -206,8 +207,9 @@ class XmlToArrowParser:
     def schema(self, table: str) -> Schema:
         """Returns the pyarrow schema of an output table without parsing anything.
 
-        The schema is fully determined by the configuration: one ``<level>``
-        UInt32 index column per ``levels`` entry, followed by the configured
+        The schema is fully determined by the configuration: the table's key
+        and link columns (``_id``, ``_<table>_id``, ...), or in a version 1
+        configuration its ``<level>`` columns, followed by the configured
         fields. Useful for setting up schema-first sinks (Parquet writers,
         dataset registrations) before the first batch arrives.
 
@@ -229,7 +231,9 @@ class XmlToArrowParser:
         most often a table whose row boundaries are inferred from more than one
         child element, which yields one partially-filled row per child rather
         than one row per record. That rule depends on which fields happen to be
-        configured, so adding a column can change a table's row count.
+        configured, so adding a column can change a table's row count. A
+        configuration that does not declare ``version: 2`` also gets a
+        deprecation notice, last, listing what it still needs to change.
 
         Warnings never change how a document parses, and this package never
         prints them: what to do with them is your decision. Logging them at
