@@ -1047,7 +1047,7 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 [[package]]
 name = "xml2arrow"
 version = "0.20.0"
-source = "git+https://github.com/mluttikh/xml2arrow.git?branch=develop#1d4578d23aac8afb01a1a596441792fccbea0ee6"
+source = "git+https://github.com/mluttikh/xml2arrow.git?branch=develop#03edf7d94da62b6d323b8034f2f4f76359717a62"
 dependencies = [
  "arrow",
  "atoi",
