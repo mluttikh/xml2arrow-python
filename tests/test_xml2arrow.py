@@ -1485,10 +1485,15 @@ def test_version_returns_string() -> None:
 def test_warnings_is_empty_for_a_config_with_nothing_to_flag(
     tmp_path: Path,
 ) -> None:
-    """A table that declares its row boundaries has nothing surprising to report."""
+    """A version 2 config has nothing surprising to report.
+
+    ``version: 2`` matters here: without it the config is version 1, which
+    always carries a deprecation notice.
+    """
     config = tmp_path / "config.yaml"
     config.write_text(
         """
+version: 2
 tables:
   - name: items
     xml_path: /root/items
@@ -1528,10 +1533,47 @@ tables:
     )
     warnings = XmlToArrowParser(config).warnings()
 
-    assert len(warnings) == 1
-    assert isinstance(warnings[0], str)
+    # The row-boundary warning, then the deprecation notice that every
+    # version 1 config gets last.
+    assert len(warnings) == 2
+    assert all(isinstance(warning, str) for warning in warnings)
     # Names the table, so a config with several has an actionable message.
     assert "header" in warnings[0]
+    assert "row boundaries are inferred" in warnings[0]
+    assert "configuration format version 1" in warnings[1]
+
+
+def test_warnings_ends_with_the_version_1_deprecation_notice() -> None:
+    """A config without ``version: 2`` is told it is deprecated, and what is left.
+
+    The notice lists what ``version: 2`` would still reject in this config, and
+    it goes away once the config is migrated and says so.
+    """
+    version_1 = """
+tables:
+  - name: items
+    xml_path: /root/items
+    levels: []
+    fields:
+      - {name: a, xml_path: /root/items/item/a, data_type: Int32}
+"""
+    warnings = XmlToArrowParser.from_yaml_str(version_1).warnings()
+
+    assert len(warnings) == 1
+    assert "configuration format version 1, which is deprecated" in warnings[0]
+    assert "must declare `row:`" in warnings[0]
+    assert "items.a" in warnings[0]
+
+    version_2 = """
+version: 2
+tables:
+  - name: items
+    xml_path: /root/items
+    row: item
+    fields:
+      - {name: a, path: a, data_type: Int32}
+"""
+    assert XmlToArrowParser.from_yaml_str(version_2).warnings() == []
 
 
 def test_warnings_does_not_change_parsing(tmp_path: Path) -> None:
