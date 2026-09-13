@@ -1807,3 +1807,98 @@ tables:
       - {name: value, xml_path: /data/item/value, data_type: Int32}
 """
             )
+
+
+class TestToVersion2:
+    """Converting a configuration to format version 2."""
+
+    VERSION_1 = """
+tables:
+  - name: stations
+    xml_path: /report/stations
+    levels: [station]
+    fields:
+      - {name: id, xml_path: /report/stations/station/@id, data_type: Utf8}
+  - name: readings
+    xml_path: /report/stations/station/readings
+    levels: [station, reading]
+    fields:
+      - {name: value, xml_path: /report/stations/station/readings/reading/value, data_type: Float64}
+"""
+
+    # The padded id is what version 2 would trim; the conversion must keep it.
+    XML = b"""<report><stations>
+  <station id=" S1 "><readings><reading><value>1.5</value></reading><reading><value>2.5</value></reading></readings></station>
+  <station id="S2"><readings><reading><value>3.0</value></reading></readings></station>
+</stations></report>"""
+
+    @staticmethod
+    def assert_same_output(
+        before: XmlToArrowParser, after: XmlToArrowParser, xml: bytes
+    ) -> None:
+        tables_before, tables_after = before.parse(xml), after.parse(xml)
+        assert tables_before.keys() == tables_after.keys()
+        for name, batch in tables_before.items():
+            assert batch.equals(tables_after[name]), name
+
+    def test_the_converted_config_parses_the_same(self) -> None:
+        """The promise the conversion makes: identical output, whitespace included."""
+        original = XmlToArrowParser.from_yaml_str(self.VERSION_1)
+        conversion = original.to_version_2()
+        converted = XmlToArrowParser.from_yaml_str(conversion.yaml)
+
+        assert conversion.unconverted == []
+        assert "version: 2" in conversion.yaml
+        assert converted.warnings() == []
+        self.assert_same_output(original, converted, self.XML)
+
+    def test_a_parser_built_from_a_file_converts_the_same(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.yaml"
+        config.write_text(self.VERSION_1)
+        from_file = XmlToArrowParser(config).to_version_2()
+        from_string = XmlToArrowParser.from_yaml_str(self.VERSION_1).to_version_2()
+        assert from_file.yaml == from_string.yaml
+
+    def test_parts_that_would_change_output_are_left_and_listed(self) -> None:
+        """A table whose rows end at two child elements has no ``row:`` that keeps them."""
+        yaml = """
+tables:
+  - name: header
+    xml_path: /report/header
+    fields:
+      - {name: title, xml_path: /report/header/title, data_type: Utf8, nullable: true}
+      - {name: created, xml_path: /report/header/created, data_type: Utf8, nullable: true}
+"""
+        xml = b"<report><header><title>Q3</title><created>2026</created></header></report>"
+        original = XmlToArrowParser.from_yaml_str(yaml)
+        conversion = original.to_version_2()
+
+        assert len(conversion.unconverted) == 1
+        assert "header" in conversion.unconverted[0]
+        assert "version: 2" not in conversion.yaml
+        # Left unconverted, but still converted as far as it goes, and still
+        # the same output.
+        self.assert_same_output(original, XmlToArrowParser.from_yaml_str(conversion.yaml), xml)
+
+    def test_a_version_2_config_comes_back_unchanged(self) -> None:
+        yaml = """
+version: 2
+tables:
+  - name: items
+    xml_path: /data
+    row: item
+    fields:
+      - {name: s, path: s, data_type: Utf8}
+"""
+        original = XmlToArrowParser.from_yaml_str(yaml)
+        conversion = original.to_version_2()
+        assert conversion.unconverted == []
+        self.assert_same_output(
+            original,
+            XmlToArrowParser.from_yaml_str(conversion.yaml),
+            b"<data><item><s> padded </s></item></data>",
+        )
+
+    def test_repr_counts_the_parts_left(self) -> None:
+        conversion = XmlToArrowParser.from_yaml_str(self.VERSION_1).to_version_2()
+        assert repr(conversion) == "Conversion(unconverted=0)"

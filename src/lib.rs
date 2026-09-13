@@ -205,6 +205,11 @@ pub struct XmlToArrowParser {
     /// Upstream's `Parser` is itself a handle over shared compiled state, so
     /// this is one refcounted trie however many streams are cloned off it.
     parser: Parser,
+    /// The configuration the parser was compiled from, kept for
+    /// `to_version_2`: converting it, rather than re-reading the source,
+    /// converts exactly what this parser parses, even if the file has changed
+    /// since.
+    config: Config,
 }
 
 /// Folds the optional per-call overrides onto upstream's defaults. `None`
@@ -245,6 +250,7 @@ impl XmlToArrowParser {
         Ok(XmlToArrowParser {
             source: ConfigSource::Path(config_path),
             parser: Parser::new(&config)?,
+            config,
         })
     }
 
@@ -276,6 +282,7 @@ impl XmlToArrowParser {
         Ok(XmlToArrowParser {
             source: ConfigSource::Yaml(yaml.to_owned()),
             parser: Parser::new(&config)?,
+            config,
         })
     }
 
@@ -474,6 +481,43 @@ impl XmlToArrowParser {
             .collect()
     }
 
+    /// Converts the configuration to format version 2, without changing what
+    /// it produces.
+    ///
+    /// Every document parses to the same tables, columns, values and errors
+    /// under the converted configuration as under this one. A part that
+    /// version 2 can only express by changing the output is left as it was and
+    /// listed in ``unconverted``; the converted configuration declares
+    /// ``version: 2`` only when that list is empty. A configuration that
+    /// already declares ``version: 2`` comes back unchanged.
+    ///
+    /// The YAML is written fresh: the original's comments and layout are not
+    /// kept, and keys left at their defaults are omitted.
+    ///
+    /// Returns:
+    ///     Conversion: The converted configuration as YAML, and the parts
+    ///         left for you to decide.
+    ///
+    /// Example:
+    ///     >>> conversion = XmlToArrowParser("config.yaml").to_version_2()
+    ///     >>> for part in conversion.unconverted:
+    ///     ...     print("left for you:", part)
+    ///     >>> Path("config-v2.yaml").write_text(conversion.yaml)
+    pub fn to_version_2(&self) -> PyResult<Conversion> {
+        let conversion = self.config.to_version_2()?;
+        let yaml = yaml_serde::to_string(&conversion.config).map_err(xml2arrow::Error::from)?;
+        Ok(Conversion {
+            yaml,
+            // Strings, as `warnings()` returns: upstream's `Unconverted` is
+            // `#[non_exhaustive]`, and its `Display` text says what to decide.
+            unconverted: conversion
+                .unconverted
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+        })
+    }
+
     /// Supports pickling, and therefore multiprocessing: path-built parsers
     /// re-read their configuration file in the child process, while
     /// YAML-string parsers carry the configuration inside the pickle.
@@ -506,11 +550,48 @@ impl XmlToArrowParser {
     }
 }
 
+/// The result of [`XmlToArrowParser::to_version_2`]: the converted
+/// configuration as YAML, and the parts left for the author to decide.
+///
+/// Holds text rather than a parser, because the point of converting is to
+/// write the result down and review it. `XmlToArrowParser.from_yaml_str`
+/// turns it into a parser when one is wanted.
+#[pyclass(name = "Conversion", module = "xml2arrow._xml2arrow", frozen)]
+pub struct Conversion {
+    yaml: String,
+    unconverted: Vec<String>,
+}
+
+#[pymethods]
+impl Conversion {
+    /// The converted configuration, as YAML.
+    ///
+    /// It declares ``version: 2`` when ``unconverted`` is empty. Otherwise
+    /// every other part is converted, and the configuration keeps its version
+    /// until the listed parts are resolved.
+    #[getter]
+    fn yaml(&self) -> &str {
+        &self.yaml
+    }
+
+    /// The parts that could not be converted without changing the output,
+    /// one message each, saying what would change.
+    #[getter]
+    fn unconverted(&self) -> Vec<String> {
+        self.unconverted.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Conversion(unconverted={})", self.unconverted.len())
+    }
+}
+
 /// A Python module for parsing XML files to Arrow RecordBatches.
 #[pymodule]
 fn _xml2arrow(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<XmlToArrowParser>()?;
     m.add_class::<RecordBatchStream>()?;
+    m.add_class::<Conversion>()?;
     m.add("Xml2ArrowError", py.get_type::<Xml2ArrowError>())?;
     m.add("XmlParsingError", py.get_type::<XmlParsingError>())?;
     m.add("YamlParsingError", py.get_type::<YamlParsingError>())?;
