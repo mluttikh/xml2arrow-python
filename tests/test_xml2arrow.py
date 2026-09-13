@@ -5,6 +5,7 @@ This module contains tests for the XmlToArrowParser class and related functional
 
 import array
 import tempfile
+import warnings
 from pathlib import Path
 
 import pyarrow as pa
@@ -12,6 +13,7 @@ import pytest
 
 from xml2arrow import XmlToArrowParser
 from xml2arrow.exceptions import (
+    ConfigVersion1Warning,
     InvalidConfigError,
     ParseError,
     UnsupportedConversionError,
@@ -1451,11 +1453,18 @@ def test_pickle_roundtrip_yaml_parser(test_data_dir: Path) -> None:
 
 
 def test_exception_hierarchy() -> None:
-    """Test that every public exception subclasses Xml2ArrowError and is catchable via it."""
+    """Test that every public exception subclasses Xml2ArrowError and is catchable via it.
+
+    Warnings are exported alongside the exceptions but are not errors: a
+    warning never makes a call fail unless the host turns it into one, so it
+    has no reason to be caught as Xml2ArrowError.
+    """
     from xml2arrow import exceptions
 
     for name in exceptions.__all__:
         exc = getattr(exceptions, name)
+        if issubclass(exc, Warning):
+            continue
         assert issubclass(exc, Xml2ArrowError), f"{name} must subclass Xml2ArrowError"
 
 
@@ -1902,3 +1911,74 @@ tables:
     def test_repr_counts_the_parts_left(self) -> None:
         conversion = XmlToArrowParser.from_yaml_str(self.VERSION_1).to_version_2()
         assert repr(conversion) == "Conversion(unconverted=0)"
+
+
+class TestConfigVersion1Warning:
+    """Building a parser from a version 1 configuration warns that the format is deprecated.
+
+    pytest is configured to ignore this warning, because most tests use version
+    1 configurations on purpose; ``pytest.warns`` and ``catch_warnings`` below
+    see it regardless.
+    """
+
+    VERSION_1 = """
+tables:
+  - name: items
+    xml_path: /data
+    levels: []
+    fields:
+      - {name: v, xml_path: /data/item/v, data_type: Int32}
+"""
+
+    VERSION_2 = """
+version: 2
+tables:
+  - name: items
+    xml_path: /data
+    row: item
+    fields:
+      - {name: v, path: v, data_type: Int32}
+"""
+
+    def test_is_a_deprecation_warning(self) -> None:
+        """So Python's defaults decide who sees it, as for any library deprecation."""
+        assert issubclass(ConfigVersion1Warning, DeprecationWarning)
+
+    def test_both_constructors_warn_and_name_the_way_out(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.yaml"
+        config.write_text(self.VERSION_1)
+        builders = [
+            lambda: XmlToArrowParser(config),
+            lambda: XmlToArrowParser.from_yaml_str(self.VERSION_1),
+        ]
+        for build in builders:
+            with pytest.warns(
+                ConfigVersion1Warning,
+                match="configuration format version 1, which is deprecated",
+            ) as record:
+                build()
+            assert "to_version_2()" in str(record[0].message)
+
+    def test_points_at_the_line_that_built_the_parser(self) -> None:
+        with pytest.warns(ConfigVersion1Warning) as record:
+            XmlToArrowParser.from_yaml_str(self.VERSION_1)
+        assert record[0].filename == __file__
+
+    def test_a_version_2_config_does_not_warn(self) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            XmlToArrowParser.from_yaml_str(self.VERSION_2)
+
+    def test_a_converted_config_does_not_warn(self) -> None:
+        with pytest.warns(ConfigVersion1Warning):
+            conversion = XmlToArrowParser.from_yaml_str(self.VERSION_1).to_version_2()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            XmlToArrowParser.from_yaml_str(conversion.yaml)
+
+    def test_can_be_turned_into_an_error(self) -> None:
+        """A host that treats warnings as errors refuses version 1 configurations."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ConfigVersion1Warning)
+            with pytest.raises(ConfigVersion1Warning):
+                XmlToArrowParser.from_yaml_str(self.VERSION_1)

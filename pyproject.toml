@@ -42,6 +42,11 @@ testpaths = ["tests"]
 addopts = "-v --tb=short"
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+# Most tests use version 1 configurations on purpose, to pin how that format
+# behaves, and each of them would raise the deprecation warning. The warning
+# is tested on its own, in TestConfigVersion1Warning, so it is silenced here
+# rather than repeated in every test's output.
+filterwarnings = ["ignore::xml2arrow.exceptions.ConfigVersion1Warning"]
 
 [tool.coverage.run]
 source = ["python/xml2arrow"]

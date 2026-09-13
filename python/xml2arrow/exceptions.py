@@ -1,6 +1,7 @@
 """Defines exceptions raised by the xml2arrow package."""
 
 from ._xml2arrow import (
+    ConfigVersion1Warning,
     InvalidConfigError,
     ParseError,
     UnsupportedConversionError,
@@ -16,4 +17,5 @@ __all__ = [
     "ParseError",
     "UnsupportedConversionError",
     "InvalidConfigError",
+    "ConfigVersion1Warning",
 ]
