@@ -1803,8 +1803,12 @@ tables:
         assert v2.column("s").to_pylist() == ["hi"]
 
     def test_version_2_rejects_an_unmigrated_config(self) -> None:
-        """The whole point of the assertion: it fails loudly when not met."""
-        with pytest.raises(InvalidConfigError, match="version: 2"):
+        """The whole point of the assertion: it fails loudly when not met.
+
+        Matches the table and the missing key rather than the word "version":
+        the message states the rule, which outlives version 1.
+        """
+        with pytest.raises(InvalidConfigError, match="'items'.*'row:'"):
             XmlToArrowParser.from_yaml_str(
                 """
 version: 2
