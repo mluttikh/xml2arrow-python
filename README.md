@@ -168,6 +168,20 @@ A version 1 config, one that does not declare `version: 2`, also gets a
 in that config. See
 [Migrating to configuration format version 2](https://github.com/mluttikh/xml2arrow/blob/develop/docs/migrating-to-version-2.md).
 
+Building a parser from a version 1 config also raises
+`xml2arrow.exceptions.ConfigVersion1Warning`, a `DeprecationWarning`. Python
+shows it when the parser is built in a script's main module, in a notebook or
+under pytest, and hides it by default elsewhere. To silence it while you
+migrate:
+
+```python
+import warnings
+
+from xml2arrow.exceptions import ConfigVersion1Warning
+
+warnings.filterwarnings("ignore", category=ConfigVersion1Warning)
+```
+
 `to_version_2()` converts the configuration for you, without changing what it
 produces, and lists the parts it leaves for you to decide:
 

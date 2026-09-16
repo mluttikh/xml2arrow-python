@@ -13,6 +13,7 @@ __all__ = [
     "ParseError",
     "UnsupportedConversionError",
     "InvalidConfigError",
+    "ConfigVersion1Warning",
     "_get_version",
 ]
 
@@ -43,6 +44,10 @@ class XmlToArrowParser:
                 validated. Because validation happens at construction time, an
                 invalid config (e.g. InvalidConfigError) is raised here rather
                 than on the first ``parse()`` call.
+
+        Warns:
+            ConfigVersion1Warning: If the configuration uses format version 1,
+                which is deprecated. ``to_version_2()`` converts it.
         """
 
     @staticmethod
@@ -67,6 +72,10 @@ class XmlToArrowParser:
             YamlParsingError: If the string is not valid YAML, or does not
                 describe a configuration.
             InvalidConfigError: If the configuration parses but is not valid.
+
+        Warns:
+            ConfigVersion1Warning: If the configuration uses format version 1,
+                which is deprecated. ``to_version_2()`` converts it.
 
         Example:
             >>> parser = XmlToArrowParser.from_yaml_str('''
@@ -331,6 +340,14 @@ class YamlParsingError(Xml2ArrowError): ...
 class ParseError(Xml2ArrowError): ...
 class UnsupportedConversionError(Xml2ArrowError): ...
 class InvalidConfigError(Xml2ArrowError): ...
+
+class ConfigVersion1Warning(DeprecationWarning):
+    """Warned when a parser is built from a configuration in format version 1, which is deprecated.
+
+    The message lists what the configuration still needs to change, and
+    ``XmlToArrowParser.to_version_2()`` converts it without changing its
+    output. Filter this category to silence the warning while you migrate.
+    """
 
 def _get_version() -> str:
     """Returns the version of the xml2arrow package."""

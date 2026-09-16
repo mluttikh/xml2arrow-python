@@ -1,11 +1,13 @@
 use arrow::pyarrow::ToPyArrow;
 use pyo3::{
-    exceptions::{PyKeyError, PyOSError, PyTypeError, PyValueError},
+    create_exception,
+    exceptions::{PyDeprecationWarning, PyKeyError, PyOSError, PyTypeError, PyValueError},
     intern,
     prelude::*,
     sync::PyOnceLock,
     types::{PyByteArray, PyBytes, PyDict, PyMemoryView, PyTuple},
 };
+use std::ffi::CString;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -14,7 +16,7 @@ use xml2arrow::errors::{
     InvalidConfigError, ParseError, UnsupportedConversionError, Xml2ArrowError, XmlParsingError,
     YamlParsingError,
 };
-use xml2arrow::{BatchOptions, Parser};
+use xml2arrow::{BatchOptions, Lint, Parser};
 
 mod file_like;
 mod streaming;
@@ -26,6 +28,47 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[pyfunction]
 fn _get_version() -> &'static str {
     VERSION
+}
+
+// Defined here rather than beside the error types upstream: it is a Python
+// convention for surfacing upstream's deprecation notice, not an error, and
+// the Rust crate reports the same notice through `Parser::warnings`.
+create_exception!(
+    xml2arrow,
+    ConfigVersion1Warning,
+    PyDeprecationWarning,
+    "Warned when a parser is built from a configuration in format version 1, which is deprecated."
+);
+
+/// Warns, as `ConfigVersion1Warning`, when the parser's configuration uses the
+/// deprecated configuration format version 1.
+///
+/// A `DeprecationWarning` subclass, so Python's own filters decide who sees
+/// it: shown when the parser is built in `__main__` (a script or a notebook)
+/// and under pytest, hidden by default when built deeper in an application.
+/// Its text is upstream's deprecation notice, which lists what is left, plus
+/// the way to convert.
+fn warn_if_version_1(py: Python<'_>, config: &Config, parser: &Parser) -> PyResult<()> {
+    // The version is checked before the lints are computed, so a version 2
+    // configuration pays nothing for this.
+    if !matches!(config.version, None | Some(1)) {
+        return Ok(());
+    }
+    let warnings = parser.warnings();
+    let Some(notice) = warnings
+        .iter()
+        .find(|lint| matches!(lint, Lint::ConfigVersion1 { .. }))
+    else {
+        return Ok(());
+    };
+    let message = CString::new(format!(
+        "{notice}. XmlToArrowParser.to_version_2() converts the configuration without \
+         changing its output"
+    ))
+    .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    // Stack level 1 attributes the warning to the Python line that built the
+    // parser, which is the line a reader would look for.
+    PyErr::warn(py, &py.get_type::<ConfigVersion1Warning>(), &message, 1)
 }
 
 /// Rebuilds a filesystem error as a Python `OSError` that carries the path;
@@ -238,8 +281,12 @@ impl XmlToArrowParser {
     ///
     /// Returns:
     ///     XmlToArrowParser: A new parser instance.
+    ///
+    /// Warns:
+    ///     ConfigVersion1Warning: If the configuration uses format version 1,
+    ///         which is deprecated. ``to_version_2()`` converts it.
     #[new]
-    pub fn new(config_path: PathBuf) -> PyResult<Self> {
+    pub fn new(py: Python<'_>, config_path: PathBuf) -> PyResult<Self> {
         // A missing/unreadable config should name the offending path; the
         // io::Error that bubbles out of `from_yaml_file` drops it.
         std::fs::metadata(&config_path).map_err(|e| open_error(e, &config_path))?;
@@ -247,9 +294,11 @@ impl XmlToArrowParser {
         // validation, so an invalid config now surfaces at construction time
         // rather than on the first `parse()` call.
         let config = Config::from_yaml_file(&config_path)?;
+        let parser = Parser::new(&config)?;
+        warn_if_version_1(py, &config, &parser)?;
         Ok(XmlToArrowParser {
             source: ConfigSource::Path(config_path),
-            parser: Parser::new(&config)?,
+            parser,
             config,
         })
     }
@@ -276,12 +325,18 @@ impl XmlToArrowParser {
     ///     YamlParsingError: If the string is not valid YAML, or does not
     ///         describe a configuration.
     ///     InvalidConfigError: If the configuration parses but is not valid.
+    ///
+    /// Warns:
+    ///     ConfigVersion1Warning: If the configuration uses format version 1,
+    ///         which is deprecated. ``to_version_2()`` converts it.
     #[staticmethod]
-    pub fn from_yaml_str(yaml: &str) -> PyResult<Self> {
+    pub fn from_yaml_str(py: Python<'_>, yaml: &str) -> PyResult<Self> {
         let config = Config::from_yaml_str(yaml)?;
+        let parser = Parser::new(&config)?;
+        warn_if_version_1(py, &config, &parser)?;
         Ok(XmlToArrowParser {
             source: ConfigSource::Yaml(yaml.to_owned()),
-            parser: Parser::new(&config)?,
+            parser,
             config,
         })
     }
@@ -601,6 +656,10 @@ fn _xml2arrow(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         py.get_type::<UnsupportedConversionError>(),
     )?;
     m.add("InvalidConfigError", py.get_type::<InvalidConfigError>())?;
+    m.add(
+        "ConfigVersion1Warning",
+        py.get_type::<ConfigVersion1Warning>(),
+    )?;
     m.add_wrapped(wrap_pyfunction!(_get_version))?;
     Ok(())
 }
