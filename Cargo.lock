@@ -845,6 +845,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_ignored"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "115dffd5f3853e06e746965a20dcbae6ee747ae30b543d91b0e089668bb07798"
+dependencies = [
+ "serde",
+ "serde_core",
+]
+
+[[package]]
 name = "serde_json"
 version = "1.0.134"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1048,7 +1058,7 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 [[package]]
 name = "xml2arrow"
 version = "0.20.0"
-source = "git+https://github.com/mluttikh/xml2arrow.git?branch=develop#341d4c666b5b921be79588e7eaa2b4ca4f969afd"
+source = "git+https://github.com/mluttikh/xml2arrow.git?branch=develop#b8fdcc17548e11cf5ac76169a60bf9bf75914488"
 dependencies = [
  "arrow",
  "atoi",
@@ -1059,6 +1069,7 @@ dependencies = [
  "pyo3",
  "quick-xml",
  "serde",
+ "serde_ignored",
  "yaml_serde",
 ]
 
