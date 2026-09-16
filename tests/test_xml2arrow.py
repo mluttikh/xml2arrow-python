@@ -1621,6 +1621,7 @@ class TestFromYamlString:
     def test_matches_a_parser_built_from_the_same_file(self, tmp_path: Path) -> None:
         """The two constructors must agree, or there are two sets of rules."""
         yaml = """
+version: 2
 tables:
   - name: items
     xml_path: /data
@@ -1641,6 +1642,7 @@ tables:
         """No path exists, so __repr__ must not invent one."""
         parser = XmlToArrowParser.from_yaml_str(
             """
+version: 2
 tables:
   - name: items
     xml_path: /data
@@ -1670,7 +1672,7 @@ tables:
 
 
 class TestConfigFeatures:
-    """The configuration features added in xml2arrow 0.20.
+    """The configuration format version 2 features added in xml2arrow 0.20.
 
     These are config-only: they need no binding surface of their own, which is
     exactly why they need tests here — nothing else would notice if a future
@@ -1697,6 +1699,7 @@ class TestConfigFeatures:
         """`row:` replaces inferred boundaries, and says so in the config."""
         parser = XmlToArrowParser.from_yaml_str(
             """
+version: 2
 tables:
   - name: stations
     xml_path: /report/stations
@@ -1708,15 +1711,14 @@ tables:
         batch = parser.parse(self.STATIONS)["stations"]
         assert batch.num_rows == 2
         assert batch.column("id").to_pylist() == ["alpha", "beta"]
-        # Declaring the row is what silences the row-boundary lint specifically.
-        # Other lints may still fire — this config trips the non-nullable-Utf8
-        # one — so assert on the concern rather than on an empty list.
-        assert not any("child element" in w for w in parser.warnings())
+        # Nothing is inferred, so there is no row-boundary warning to give.
+        assert parser.warnings() == []
 
     def test_relative_field_paths_resolve_against_the_row(self) -> None:
         """`path:` is relative to the row element; the absolute form still works."""
         relative = XmlToArrowParser.from_yaml_str(
             """
+version: 2
 tables:
   - name: stations
     xml_path: /report/stations
@@ -1727,12 +1729,13 @@ tables:
         )
         absolute = XmlToArrowParser.from_yaml_str(
             """
+version: 2
 tables:
   - name: stations
     xml_path: /report/stations
     row: station
     fields:
-      - {name: id, xml_path: /report/stations/station/@id, data_type: Utf8}
+      - {name: id, path: /report/stations/station/@id, data_type: Utf8}
 """
         )
         assert (
@@ -1747,6 +1750,7 @@ tables:
         """
         parser = XmlToArrowParser.from_yaml_str(
             """
+version: 2
 tables:
   - name: stations
     xml_path: /report/stations
@@ -1768,25 +1772,35 @@ tables:
         assert tables["measurements"].column("_stations_id").to_pylist() == [0, 0, 1]
 
     def test_value_policies_apply(self) -> None:
-        """A per-field policy opts out of one historical quirk at a time."""
+        """A per-field policy states a choice other than the version 2 default."""
         parser = XmlToArrowParser.from_yaml_str(
             """
+version: 2
 tables:
   - name: items
     xml_path: /data
     row: item
     fields:
       - {name: n, path: n, data_type: Int32, nullable: true, null_values: ["N/A"]}
-      - {name: s, path: s, data_type: Utf8, trim: true}
+      - {name: s, path: s, data_type: Utf8, trim: false}
 """
         )
         batch = parser.parse(b"<data><item><n>N/A</n><s> hi </s></item></data>")["items"]
         assert batch.column("n").to_pylist() == [None]
-        assert batch.column("s").to_pylist() == ["hi"]
+        assert batch.column("s").to_pylist() == [" hi "]
 
     def test_version_2_changes_the_defaults(self) -> None:
         """`version: 2` trims every type, where v1 leaves Utf8 as written."""
-        body = """
+        version_1 = """
+tables:
+  - name: items
+    xml_path: /data
+    levels: []
+    fields:
+      - {name: s, xml_path: /data/item/s, data_type: Utf8}
+"""
+        version_2 = """
+version: 2
 tables:
   - name: items
     xml_path: /data
@@ -1796,11 +1810,25 @@ tables:
 """
         xml = b"<data><item><s> hi </s></item></data>"
 
-        v1 = XmlToArrowParser.from_yaml_str(body).parse(xml)["items"]
-        v2 = XmlToArrowParser.from_yaml_str("version: 2\n" + body).parse(xml)["items"]
+        v1 = XmlToArrowParser.from_yaml_str(version_1).parse(xml)["items"]
+        v2 = XmlToArrowParser.from_yaml_str(version_2).parse(xml)["items"]
 
         assert v1.column("s").to_pylist() == [" hi "]
         assert v2.column("s").to_pylist() == ["hi"]
+
+    def test_version_1_rejects_a_version_2_key(self) -> None:
+        """A configuration is one version or the other, never a mix."""
+        with pytest.raises(InvalidConfigError, match="'row:' in table 'items'"):
+            XmlToArrowParser.from_yaml_str(
+                """
+tables:
+  - name: items
+    xml_path: /data
+    row: item
+    fields:
+      - {name: value, xml_path: /data/item/value, data_type: Int32}
+"""
+            )
 
     def test_version_2_rejects_an_unmigrated_config(self) -> None:
         """The whole point of the assertion: it fails loudly when not met.
@@ -1873,7 +1901,11 @@ tables:
         assert from_file.yaml == from_string.yaml
 
     def test_parts_that_would_change_output_are_left_and_listed(self) -> None:
-        """A table whose rows end at two child elements has no ``row:`` that keeps them."""
+        """A table whose rows end at two child elements has no ``row:`` that keeps them.
+
+        The result declares version 2 all the same, and does not load until the
+        listed part is resolved.
+        """
         yaml = """
 tables:
   - name: header
@@ -1882,16 +1914,15 @@ tables:
       - {name: title, xml_path: /report/header/title, data_type: Utf8, nullable: true}
       - {name: created, xml_path: /report/header/created, data_type: Utf8, nullable: true}
 """
-        xml = b"<report><header><title>Q3</title><created>2026</created></header></report>"
-        original = XmlToArrowParser.from_yaml_str(yaml)
-        conversion = original.to_version_2()
+        conversion = XmlToArrowParser.from_yaml_str(yaml).to_version_2()
 
         assert len(conversion.unconverted) == 1
         assert "header" in conversion.unconverted[0]
-        assert "version: 2" not in conversion.yaml
-        # Left unconverted, but still converted as far as it goes, and still
-        # the same output.
-        self.assert_same_output(original, XmlToArrowParser.from_yaml_str(conversion.yaml), xml)
+        assert "version: 2" in conversion.yaml
+        # Every other part is converted: the fields are spelled `path:`.
+        assert "xml_path: /report/header/title" not in conversion.yaml
+        with pytest.raises(InvalidConfigError, match="'header'"):
+            XmlToArrowParser.from_yaml_str(conversion.yaml)
 
     def test_a_version_2_config_comes_back_unchanged(self) -> None:
         yaml = """

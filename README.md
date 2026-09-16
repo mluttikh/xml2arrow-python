@@ -84,13 +84,14 @@ configuration is shared with the Rust crate, so the reference lives there.
 
 > **Configuration format version 1 is deprecated.** A config without
 > `version: 2`, which includes every config written for 0.19 and earlier, is
-> read as version 1. It keeps working until 1.0, and `parser.warnings()` lists
-> what it still needs to change.
+> read as version 1, and a config is one version or the other: a version 1
+> config that sets a version 2 key such as `row:` is rejected. Version 1 keeps
+> working until 1.0, and `parser.warnings()` lists what it needs to change.
 > [Configuration format version 1](https://github.com/mluttikh/xml2arrow/blob/develop/docs/configuration-v1.md)
 > documents it, and
 > [Migrating to configuration format version 2](https://github.com/mluttikh/xml2arrow/blob/develop/docs/migrating-to-version-2.md)
-> moves a config across in four steps, which `parser.to_version_2()` can take for
-> you without changing its output.
+> moves a config across: `parser.to_version_2()` converts it without changing
+> its output.
 
 ### 2. Parse the XML
 
@@ -139,8 +140,8 @@ and any other tool in the Arrow ecosystem.
 
 `XmlToArrowParser(...)` rejects configurations that cannot work. `warnings()`
 reports the next tier: configurations that are valid but whose behavior
-commonly surprises — a field outside its table's row, say, or, in a version 1
-config, **row boundaries inferred** from several different child elements,
+commonly surprises — a table with no fields, say, or, in a version 1 config,
+**row boundaries inferred** from several different child elements,
 which yield one partially-filled row per child rather than one row per record.
 
 ```python
@@ -154,24 +155,25 @@ for warning in parser.warnings():
 ```text
 Table 'header' (xml_path /report/header) has 2 distinct configured child
 elements (title, created); row boundaries are inferred, so this table produces
-2 partially-filled rows per <header> rather than one. Declare `row:` to fix it:
-`row: "."` for one row per <header>, or `row: <element>` to name the repeating
-element
+2 partially-filled rows per <header> rather than one. Configuration format
+version 2 fixes it by declaring the row: `row: "."` for one row per <header>, or
+`row: <element>` to name the repeating element
 ```
 
 Warnings are plain strings, never printed by the package, and purely advisory:
 asking for them cannot change how a document parses. The inferred-boundary
-warning carries its own fix and goes quiet once you apply it.
+warning carries its own fix, the `row:` line version 2 needs, and a version 2
+config never reports it.
 
 A version 1 config, one that does not declare `version: 2`, also gets a
-**deprecation notice** that lists exactly what `version: 2` would still reject
+**deprecation notice** that lists exactly what `version: 2` would reject
 in that config. See
 [Migrating to configuration format version 2](https://github.com/mluttikh/xml2arrow/blob/develop/docs/migrating-to-version-2.md).
 
 Building a parser from a version 1 config also raises
 `xml2arrow.exceptions.ConfigVersion1Warning`, a `DeprecationWarning`. Python
 shows it when the parser is built in a script's main module, in a notebook or
-under pytest, and hides it by default elsewhere. To silence it while you
+under pytest, and hides it by default elsewhere. To silence it until you
 migrate:
 
 ```python
@@ -194,8 +196,9 @@ for part in conversion.unconverted:
 Path("config-v2.yaml").write_text(conversion.yaml)
 ```
 
-The converted configuration declares `version: 2` once nothing is left. The
-YAML is written fresh, without the original's comments.
+The converted configuration always declares `version: 2`, and loads once
+nothing is left for you. The YAML is written fresh, without the original's
+comments.
 
 It is worth running once against a real configuration before trusting its row
 counts — it is the cheapest signal available, and needs no document.

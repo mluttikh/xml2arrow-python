@@ -262,12 +262,13 @@ class XmlToArrowParser:
     def to_version_2(self) -> Conversion:
         """Converts the configuration to format version 2, without changing what it produces.
 
-        Every document parses to the same tables, columns, values and errors
-        under the converted configuration as under this one. A part that
+        The converted configuration always declares ``version: 2``. A part that
         version 2 can only express by changing the output is left as it was and
-        listed in ``unconverted``; the converted configuration declares
-        ``version: 2`` only when that list is empty. A configuration that
-        already declares ``version: 2`` comes back unchanged.
+        listed in ``unconverted``. When that list is empty, every document
+        parses to the same tables, columns, values and errors under the
+        converted configuration as under this one; otherwise the converted
+        configuration does not load until the listed parts are resolved. A
+        configuration that already declares ``version: 2`` comes back unchanged.
 
         The YAML is written fresh: the original's comments and layout are not
         kept, and keys left at their defaults are omitted.
@@ -298,8 +299,8 @@ class Conversion:
     def yaml(self) -> str:
         """The converted configuration, as YAML.
 
-        It declares ``version: 2`` when ``unconverted`` is empty. Otherwise
-        every other part is converted, and the configuration keeps its version
+        It always declares ``version: 2``, and loads when ``unconverted`` is
+        empty. Otherwise every other part is converted, and it does not load
         until the listed parts are resolved.
         """
 
