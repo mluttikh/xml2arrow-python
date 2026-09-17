@@ -344,7 +344,11 @@ tables:
 
 
 def test_invalid_config_error_field_path_not_under_table(tmp_path: Path) -> None:
-    """Test that a field xml_path outside its table's xml_path raises InvalidConfigError."""
+    """Test that a field located outside its table's element raises InvalidConfigError.
+
+    Matched on the field and the table rather than on the wording, which states
+    the rule and has changed once already.
+    """
     config_yaml = """
 tables:
   - name: t
@@ -359,7 +363,7 @@ tables:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(config_yaml)
 
-    with pytest.raises(InvalidConfigError, match=r"not under table"):
+    with pytest.raises(InvalidConfigError, match=r"'stray'.*'t'"):
         XmlToArrowParser(config_path)
 
 
@@ -1505,7 +1509,7 @@ def test_warnings_is_empty_for_a_config_with_nothing_to_flag(
 version: 2
 tables:
   - name: items
-    xml_path: /root/items
+    scope: /root/items
     row: item
     fields:
       - {name: a, path: a, data_type: Int32}
@@ -1577,7 +1581,7 @@ tables:
 version: 2
 tables:
   - name: items
-    xml_path: /root/items
+    scope: /root/items
     row: item
     fields:
       - {name: a, path: a, data_type: Int32}
@@ -1624,7 +1628,7 @@ class TestFromYamlString:
 version: 2
 tables:
   - name: items
-    xml_path: /data
+    scope: /data
     row: item
     fields:
       - {name: value, path: value, data_type: Int32}
@@ -1645,7 +1649,7 @@ tables:
 version: 2
 tables:
   - name: items
-    xml_path: /data
+    scope: /data
     row: item
     fields:
       - {name: value, path: value, data_type: Int32}
@@ -1702,7 +1706,7 @@ class TestConfigFeatures:
 version: 2
 tables:
   - name: stations
-    xml_path: /report/stations
+    scope: /report/stations
     row: station
     fields:
       - {name: id, path: "@id", data_type: Utf8}
@@ -1721,7 +1725,7 @@ tables:
 version: 2
 tables:
   - name: stations
-    xml_path: /report/stations
+    scope: /report/stations
     row: station
     fields:
       - {name: id, path: "@id", data_type: Utf8}
@@ -1732,7 +1736,7 @@ tables:
 version: 2
 tables:
   - name: stations
-    xml_path: /report/stations
+    scope: /report/stations
     row: station
     fields:
       - {name: id, path: /report/stations/station/@id, data_type: Utf8}
@@ -1753,12 +1757,12 @@ tables:
 version: 2
 tables:
   - name: stations
-    xml_path: /report/stations
+    scope: /report/stations
     row: station
     fields:
       - {name: id, path: "@id", data_type: Utf8}
   - name: measurements
-    xml_path: /report/stations/station/measurements
+    scope: /report/stations/station/measurements
     row: m
     links:
       - parent: stations
@@ -1778,7 +1782,7 @@ tables:
 version: 2
 tables:
   - name: items
-    xml_path: /data
+    scope: /data
     row: item
     fields:
       - {name: n, path: n, data_type: Int32, nullable: true, null_values: ["N/A"]}
@@ -1803,7 +1807,7 @@ tables:
 version: 2
 tables:
   - name: items
-    xml_path: /data
+    scope: /data
     row: item
     fields:
       - {name: s, path: s, data_type: Utf8}
@@ -1842,7 +1846,7 @@ tables:
 version: 2
 tables:
   - name: items
-    xml_path: /data
+    scope: /data
     levels: []
     fields:
       - {name: value, xml_path: /data/item/value, data_type: Int32}
@@ -1929,7 +1933,7 @@ tables:
 version: 2
 tables:
   - name: items
-    xml_path: /data
+    scope: /data
     row: item
     fields:
       - {name: s, path: s, data_type: Utf8}
@@ -1969,7 +1973,7 @@ tables:
 version: 2
 tables:
   - name: items
-    xml_path: /data
+    scope: /data
     row: item
     fields:
       - {name: v, path: v, data_type: Int32}

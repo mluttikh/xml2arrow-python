@@ -82,7 +82,7 @@ class XmlToArrowParser:
             ... version: 2
             ... tables:
             ...   - name: items
-            ...     xml_path: /data
+            ...     scope: /data
             ...     row: item
             ...     fields:
             ...       - {name: value, path: value, data_type: Int32}
