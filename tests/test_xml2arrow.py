@@ -1759,6 +1759,7 @@ tables:
   - name: stations
     scope: /report/stations
     row: station
+    row_id: true
     fields:
       - {name: id, path: "@id", data_type: Utf8}
   - name: measurements

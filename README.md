@@ -54,6 +54,7 @@ tables:
   - name: stations
     scope: /report/stations         # the element the rows live in
     row: station                    # one row per <station>
+    row_id: true                    # adds _id, which readings links to
     fields:
       - {name: id,   path: "@id", data_type: Utf8}
       - {name: name, path: name,  data_type: Utf8}
@@ -366,6 +367,7 @@ tables:
   - name: stations
     scope: /report/monitoring_stations
     row: monitoring_station
+    row_id: true
     links: []                   # inside report's row, but needs no link to it
     fields:
       - {name: id,           path: "@id",                    data_type: Utf8}
@@ -403,9 +405,10 @@ stations_df = pl.from_arrow(record_batches["stations"])
 measurements_df = pl.from_arrow(record_batches["measurements"])
 
 # Join measurements back to their parent station on the declared key. The
-# config's `links: - parent: stations` produced `_stations_id` here and `_id`
-# on the stations table; the values are global row ordinals, so this join
-# stays correct however the document nests or repeats its containers.
+# config's `links: - parent: stations` produced `_stations_id` here, and the
+# stations table's `row_id: true` produced its `_id`; the values are global row
+# ordinals, so this join stays correct however the document nests or repeats
+# its containers.
 merged = measurements_df.join(
     stations_df.select(["_id", "id"]),
     left_on="_stations_id",
@@ -452,7 +455,7 @@ print(merged.select(["id", "timestamp", "temperature", "pressure"]))
 ```
 
 The `_stations_id` column in the `measurements` table is each measurement's
-parent station, and `_id` on `stations` is the key it refers to — both
-materialized by the `links: - parent: stations` line in the config. The values
+parent station, added by its `links: - parent: stations` line, and `_id` on
+`stations` is the key it refers to, added by that table's `row_id: true`. The values
 are global row ordinals rather than per-scope counters, so the join above stays
 correct however often `<monitoring_stations>` repeats.
