@@ -429,8 +429,8 @@ impl XmlToArrowParser {
 
     /// Streams the config's single output table as a native pyarrow reader.
     ///
-    /// For configurations defining exactly one table with fields — the
-    /// common shape for very large documents — this returns a
+    /// For configurations defining exactly one output table — the common
+    /// shape for very large documents — this returns a
     /// ``pyarrow.RecordBatchReader``, directly consumable by
     /// ``pyarrow.parquet.ParquetWriter``, ``pyarrow.dataset``, DuckDB, and
     /// anything else speaking the Arrow C stream protocol. The reader's
@@ -450,7 +450,8 @@ impl XmlToArrowParser {
     ///
     /// Raises:
     ///     InvalidConfigError: If the configuration does not define exactly
-    ///         one table with fields. Raised here, before any parsing.
+    ///         one output table, one with a field, a key or a link. Raised
+    ///         here, before any parsing.
     ///
     /// Note:
     ///     Failures that happen *while* the returned reader is consumed reach
@@ -490,8 +491,9 @@ impl XmlToArrowParser {
     ///     pyarrow.Schema: The table's schema.
     ///
     /// Raises:
-    ///     KeyError: If the configuration has no output table of that name
-    ///         (structural tables — empty ``fields`` — produce no output).
+    ///     KeyError: If the configuration has no output table of that name.
+    ///         A table with no column, meaning no fields, key or link,
+    ///         produces no output.
     pub fn schema(&self, py: Python<'_>, table: &str) -> PyResult<Py<PyAny>> {
         match self.parser.schema(table) {
             Some(schema) => Ok(schema.to_pyarrow(py)?.unbind()),
