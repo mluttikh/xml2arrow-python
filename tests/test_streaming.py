@@ -277,7 +277,7 @@ def structural_parser(parser_factory) -> XmlToArrowParser:  # type: ignore[no-un
 def test_schema_of_structural_table_raises_key_error(
     structural_parser: XmlToArrowParser,
 ) -> None:
-    # A table with no fields produces no output, so it has no schema — the
+    # A table with no column produces no output, so it has no schema — the
     # case schema()'s docstring calls out, distinct from a misspelled name.
     with pytest.raises(KeyError, match="outline"):
         structural_parser.schema("outline")
@@ -299,6 +299,55 @@ def test_single_table_ignores_structural_siblings(
     reader = structural_parser.parse_single_table(STRUCTURAL_XML)
     assert reader.schema == structural_parser.schema("items")
     assert reader.read_all().column("value").to_pylist() == [1, 2]
+
+
+# A version 2 table without fields is output when it has a column: here the
+# key that `row_id: true` declares, which the readings' link refers to.
+KEYED_WITHOUT_FIELDS_CONFIG = """
+version: 2
+tables:
+  - name: stations
+    scope: /root/stations
+    row: station
+    row_id: true
+    fields: []
+  - name: readings
+    scope: /root/stations/station/readings
+    row: reading
+    links: [{parent: stations}]
+    fields:
+      - {name: value, path: value, data_type: Int32}
+"""
+
+KEYED_WITHOUT_FIELDS_XML = (
+    b"<root><stations>"
+    b"<station><readings><reading><value>1</value></reading>"
+    b"<reading><value>2</value></reading></readings></station>"
+    b"<station><readings><reading><value>3</value></reading></readings></station>"
+    b"</stations></root>"
+)
+
+
+def test_a_table_without_fields_but_with_a_key_is_output(parser_factory) -> None:  # type: ignore[no-untyped-def]
+    parser = parser_factory(KEYED_WITHOUT_FIELDS_CONFIG)
+    assert parser.schema("stations").names == ["_id"]
+
+    batches: dict[str, list[pa.RecordBatch]] = {}
+    for name, batch in parser.parse_batches(KEYED_WITHOUT_FIELDS_XML, max_rows_per_batch=1):
+        batches.setdefault(name, []).append(batch)
+    stations = pa.Table.from_batches(batches["stations"])
+    readings = pa.Table.from_batches(batches["readings"])
+    assert stations.column("_id").to_pylist() == [0, 1]
+    assert readings.column("_stations_id").to_pylist() == [0, 0, 1]
+
+
+def test_a_table_without_fields_but_with_a_key_counts_for_single_table(
+    parser_factory,  # type: ignore[no-untyped-def]
+) -> None:
+    # It produces output, so the config has two output tables.
+    parser = parser_factory(KEYED_WITHOUT_FIELDS_CONFIG)
+    with pytest.raises(InvalidConfigError):
+        parser.parse_single_table(KEYED_WITHOUT_FIELDS_XML)
 
 
 # --- owned streams -----------------------------------------------------------

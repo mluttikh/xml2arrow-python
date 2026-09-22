@@ -177,7 +177,7 @@ class XmlToArrowParser:
     ) -> RecordBatchReader:
         """Streams the config's single output table as a native pyarrow reader.
 
-        For configurations defining exactly one table with fields — the common
+        For configurations defining exactly one output table — the common
         shape for very large documents — this returns a
         ``pyarrow.RecordBatchReader``, directly consumable by
         ``pyarrow.parquet.ParquetWriter``, ``pyarrow.dataset``, DuckDB, and
@@ -199,7 +199,8 @@ class XmlToArrowParser:
 
         Raises:
             InvalidConfigError: If the configuration does not define exactly
-                one table with fields. Raised here, before any parsing.
+                one output table, one with a field, a key or a link. Raised
+                here, before any parsing.
             OSError: If ``source`` is a path that cannot be opened.
             ValueError: If ``source`` is a ``str`` holding XML content rather
                 than a file path.
@@ -230,8 +231,9 @@ class XmlToArrowParser:
             The table's schema.
 
         Raises:
-            KeyError: If the configuration has no output table of that name
-                (structural tables — empty ``fields`` — produce no output).
+            KeyError: If the configuration has no output table of that name.
+                A table with no column, meaning no fields, key or link,
+                produces no output.
         """
 
     def warnings(self) -> list[str]:

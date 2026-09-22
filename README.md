@@ -143,7 +143,7 @@ and any other tool in the Arrow ecosystem.
 
 `XmlToArrowParser(...)` rejects configurations that cannot work. `warnings()`
 reports the next tier: configurations that are valid but whose behavior
-commonly surprises — a table with no fields, say, or, in a version 1 config,
+commonly surprises — a table with no columns, say, or, in a version 1 config,
 **row boundaries inferred** from several different child elements,
 which yield one partially-filled row per child rather than one row per record.
 
@@ -235,7 +235,7 @@ XML: a parent element closes *after* its children, so a child batch can
 reference a parent row that arrives in a later batch of the parent table —
 irrelevant when each table goes to its own sink.
 
-When the config defines exactly one table with fields — the common shape for
+When the config defines exactly one output table — the common shape for
 huge documents — `parse_single_table()` returns a native
 `pyarrow.RecordBatchReader`, pluggable directly into
 `pyarrow.parquet.ParquetWriter`, `pyarrow.dataset`, or DuckDB:
