@@ -1,8 +1,10 @@
 use arrow::pyarrow::ToPyArrow;
 use pyo3::{
-    exceptions::{PyKeyError, PyOSError, PyValueError},
+    exceptions::{PyKeyError, PyOSError, PyTypeError, PyValueError},
+    intern,
     prelude::*,
-    types::{PyByteArray, PyBytes, PyDict},
+    sync::PyOnceLock,
+    types::{PyByteArray, PyBytes, PyDict, PyMemoryView, PyTuple},
 };
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -62,11 +64,25 @@ fn open_error(err: std::io::Error, path: &Path) -> PyErr {
     PyOSError::new_err(args)
 }
 
+/// Cached `io.BytesIO` type object, used to route in-memory streams to the
+/// slice fast path instead of chunked Python `read()` calls.
+fn bytes_io(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
+    static INSTANCE: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
+    INSTANCE
+        .get_or_try_init(py, || {
+            let io = PyModule::import(py, "io")?;
+            Ok(io.getattr("BytesIO")?.unbind())
+        })
+        .map(|cell| cell.bind(py))
+}
+
 /// Represents an XML input source.
 ///
 /// `Bytes` (zero-copy) and `OwnedBytes` (a safe copy of a mutable
-/// `bytearray`) route through [`parse_xml_slice`]; `File` and `FileLike`
-/// stream through [`parse_xml`].
+/// `bytearray`) route through the slice parser; `File` and `FileLike`
+/// stream through a buffered reader. Other in-memory shapes (`BytesIO`,
+/// buffer exporters) are snapshotted into one of the first two at
+/// extraction time.
 pub enum XmlInput<'py> {
     Bytes(Bound<'py, PyBytes>),
     OwnedBytes(Vec<u8>),
@@ -79,6 +95,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for XmlInput<'py> {
 
     fn extract(obj: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
         let ob: &Bound<'py, PyAny> = &obj;
+        let py = ob.py();
         if let Ok(b) = ob.cast::<PyBytes>() {
             return Ok(Self::Bytes(b.clone()));
         }
@@ -92,7 +109,51 @@ impl<'a, 'py> FromPyObject<'a, 'py> for XmlInput<'py> {
                 Err(e) => Err(open_error(e, &path)),
             };
         }
-        Ok(Self::FileLike(PyBinaryFile::from_bound(ob)?))
+        // `BytesIO` would work through the generic file-like fallback, but
+        // one no-size read() drains the whole remainder as a single bytes
+        // object — one interpreter call instead of a chunked read() loop,
+        // with the streaming path's cursor semantics (consume from the
+        // current position, leave the cursor at EOF) for free.
+        if ob.is_instance(bytes_io(py)?)? {
+            let rest = ob.call_method0(intern!(py, "read"))?;
+            return Ok(Self::Bytes(rest.cast_into().map_err(PyErr::from)?));
+        }
+        // Streaming file-likes. This check deliberately precedes the buffer
+        // fallback below so that mmap — which both exports a buffer and has
+        // read() — streams: one-chunk-at-a-time peak memory is the point of
+        // mmapping a large file in the first place.
+        if ob.hasattr(intern!(py, "read"))? {
+            return Ok(Self::FileLike(PyBinaryFile::from_bound(ob)?));
+        }
+        // Remaining buffer exporters: memoryview, NumPy uint8 arrays,
+        // array('B'), ... Snapshotted with one tobytes() copy — the buffer
+        // protocol is outside the abi3-py310 limited API, so zero-copy here
+        // must wait until the wheel's Python floor moves to 3.11.
+        if let Ok(view) = PyMemoryView::from(ob) {
+            // A buffer only means "these bytes" when its elements *are*
+            // bytes and they are laid out in order. A `float64` array
+            // exports a buffer just as happily as a `uint8` one, and
+            // `tobytes()` would hand us its raw representation: no `<`
+            // anywhere, so the parse succeeds and returns zero rows. An
+            // empty result for a wrong input is the one outcome worth
+            // ruling out, so both properties are checked rather than
+            // assumed.
+            let itemsize: usize = view.getattr(intern!(py, "itemsize"))?.extract()?;
+            let contiguous: bool = view.getattr(intern!(py, "c_contiguous"))?.extract()?;
+            if itemsize != 1 || !contiguous {
+                return Err(PyTypeError::new_err(format!(
+                    "parse() needs a contiguous buffer of bytes, but got one with \
+                     itemsize {itemsize} (contiguous: {contiguous}). Convert it \
+                     first, e.g. with .tobytes() or .astype('uint8')"
+                )));
+            }
+            let bytes = view.call_method0(intern!(py, "tobytes"))?;
+            return Ok(Self::Bytes(bytes.cast_into().map_err(PyErr::from)?));
+        }
+        Err(PyTypeError::new_err(
+            "parse() expects a path, bytes-like or buffer object, or a file-like \
+             object with a read() method",
+        ))
     }
 }
 
@@ -120,7 +181,10 @@ impl Read for XmlReader {
 /// instance processes many files: the fixed per-document setup cost (config
 /// validation + path-trie construction) is paid a single time rather than on
 /// every parse.
-#[pyclass(name = "XmlToArrowParser")]
+///
+/// `module = ...` matters for pickling: `__reduce__` serializes the class by
+/// reference, and pickle must be able to import it from that location.
+#[pyclass(name = "XmlToArrowParser", module = "xml2arrow._xml2arrow")]
 pub struct XmlToArrowParser {
     config_path: PathBuf,
     /// `Arc` so the streaming producer threads (src/streaming.rs) can hold
@@ -179,7 +243,9 @@ impl XmlToArrowParser {
     ///
     /// Args:
     ///     source: The XML to parse. Accepts ``str``, ``os.PathLike``,
-    ///         ``bytes``, ``bytearray``, or a readable file-like object.
+    ///         ``bytes``, ``bytearray``, any object exporting the buffer
+    ///         protocol (``memoryview``, NumPy ``uint8`` arrays, ... —
+    ///         snapshotted with one copy), or a readable file-like object.
     ///
     /// Returns:
     ///     dict: A dictionary where keys are table names (strings) and values are PyArrow RecordBatch objects.
@@ -197,9 +263,13 @@ impl XmlToArrowParser {
             XmlInput::File(f) => {
                 py.detach(|| self.parser.parse(BufReader::new(XmlReader::File(f))))?
             }
-            XmlInput::FileLike(f) => {
-                py.detach(|| self.parser.parse(BufReader::new(XmlReader::FileLike(f))))?
-            }
+            XmlInput::FileLike(f) => py.detach(|| {
+                // 64 KiB per refill: each one is a Python read() round-trip
+                // (text mode requests capacity/4 characters), so the default
+                // 8 KiB buffer costs 8x the interpreter-call overhead.
+                let reader = BufReader::with_capacity(64 * 1024, XmlReader::FileLike(f));
+                self.parser.parse(reader)
+            })?,
         };
         let tables = PyDict::new(py);
         for (name, batch) in batches {
@@ -224,7 +294,8 @@ impl XmlToArrowParser {
     ///
     /// Args:
     ///     source: The XML to parse. Accepts ``str``, ``os.PathLike``,
-    ///         ``bytes``, ``bytearray``, or a readable file-like object.
+    ///         ``bytes``, ``bytearray``, a buffer-protocol object (``memoryview``,
+    ///         NumPy ``uint8`` arrays, ...), or a readable file-like object.
     ///         (Unlike ``parse()``, in-memory ``bytes`` are copied once.)
     ///     max_rows_per_batch: Rows per batch before a flush (default 8192).
     ///     max_bytes_per_batch: Value bytes per batch before a flush
@@ -264,7 +335,8 @@ impl XmlToArrowParser {
     ///
     /// Args:
     ///     source: The XML to parse. Accepts ``str``, ``os.PathLike``,
-    ///         ``bytes``, ``bytearray``, or a readable file-like object
+    ///         ``bytes``, ``bytearray``, a buffer-protocol object (``memoryview``,
+    ///         NumPy ``uint8`` arrays, ...), or a readable file-like object
     ///         (file-like objects are read fully into memory up front;
     ///         prefer paths for huge inputs).
     ///     max_rows_per_batch: Rows per batch before a flush (default 8192).
@@ -331,6 +403,20 @@ impl XmlToArrowParser {
             "XmlToArrowParser(config_path='{}')",
             self.config_path.to_string_lossy()
         )
+    }
+
+    /// Supports pickling, and therefore multiprocessing. The pickle carries
+    /// the configuration *path*, not the compiled parser: the child process
+    /// re-reads and recompiles the file, so it must be readable there too.
+    fn __reduce__<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>)> {
+        let cls = py.get_type::<Self>();
+        Ok((
+            cls.into_any(),
+            PyTuple::new(py, [self.config_path.clone()])?,
+        ))
     }
 }
 
