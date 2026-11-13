@@ -1485,6 +1485,105 @@ def test_parser_works_with_a_process_pool(
         assert result[name].to_pydict() == expected[name].to_pydict()
 
 
+# --- Building from a YAML string ----------------------------------------------
+
+
+def test_from_yaml_str_matches_the_path_constructor(test_data_dir: Path) -> None:
+    """Both constructors validate and compile the same config into the same parser."""
+    yaml = (test_data_dir / "stations.yaml").read_text()
+    from_str = XmlToArrowParser.from_yaml_str(yaml)
+    from_path = XmlToArrowParser(test_data_dir / "stations.yaml")
+
+    xml = (test_data_dir / "stations.xml").read_bytes()
+    expected = from_path.parse(xml)
+    result = from_str.parse(xml)
+    assert list(result) == list(expected)
+    for name in expected:
+        assert result[name].to_pydict() == expected[name].to_pydict()
+    assert from_str.warnings() == from_path.warnings()
+
+
+def test_from_yaml_str_rejects_invalid_yaml() -> None:
+    with pytest.raises(YamlParsingError):
+        XmlToArrowParser.from_yaml_str("tables: [unclosed")
+
+
+def test_from_yaml_str_validates_the_config() -> None:
+    """A config that parses as YAML but is invalid fails at construction."""
+    with pytest.raises(InvalidConfigError, match="Duplicate table name"):
+        XmlToArrowParser.from_yaml_str(
+            """
+tables:
+  - {name: t, xml_path: /a, levels: [], fields: []}
+  - {name: t, xml_path: /b, levels: [], fields: []}
+"""
+        )
+
+
+def test_from_yaml_str_repr_does_not_invent_a_path() -> None:
+    parser = XmlToArrowParser.from_yaml_str(ITEMS_CONFIG)
+    assert repr(parser) == "XmlToArrowParser(<from YAML string>)"
+
+
+def test_pickle_roundtrip_yaml_string_parser() -> None:
+    """A string-built parser pickles its YAML, since there is no file to re-read."""
+    import pickle
+
+    parser = XmlToArrowParser.from_yaml_str(ITEMS_CONFIG)
+    restored = pickle.loads(pickle.dumps(parser))
+    assert repr(restored) == repr(parser)
+    xml = b"<root><item>a</item><item>b</item></root>"
+    assert restored.parse(xml)["items"].to_pydict() == parser.parse(xml)["items"].to_pydict()
+
+
+def test_yaml_string_parser_works_with_a_process_pool() -> None:
+    """A string-built parser reaches a worker without any config file existing."""
+    from concurrent.futures import ProcessPoolExecutor
+
+    parser = XmlToArrowParser.from_yaml_str(ITEMS_CONFIG)
+    xml = b"<root><item>a</item><item>b</item></root>"
+    with ProcessPoolExecutor(max_workers=1) as pool:
+        (result,) = list(pool.map(parser.parse, [xml]))
+    assert result["items"].column("value").to_pylist() == ["a", "b"]
+
+
+# --- Configuration warnings ----------------------------------------------------
+
+
+def test_warnings_are_empty_for_a_config_with_nothing_to_flag() -> None:
+    assert XmlToArrowParser.from_yaml_str(ITEMS_CONFIG).warnings() == []
+
+
+# Every field is an attribute of the table element itself, and attributes do
+# not delimit rows, so the table can never produce one.
+ATTRIBUTE_ONLY_TABLE_CONFIG = """
+tables:
+  - name: items
+    xml_path: /root/item
+    levels: []
+    fields:
+      - name: id
+        xml_path: /root/item/@id
+        data_type: Utf8
+        nullable: true
+"""
+
+
+def test_warnings_flag_a_table_that_can_never_produce_a_row() -> None:
+    parser = XmlToArrowParser.from_yaml_str(ATTRIBUTE_ONLY_TABLE_CONFIG)
+    (warning,) = parser.warnings()
+    assert "Table 'items'" in warning
+    assert "no configured child element" in warning
+
+
+def test_warnings_are_advisory_and_describe_the_parse() -> None:
+    """A warned config still parses, and the warning's claim holds: no rows."""
+    parser = XmlToArrowParser.from_yaml_str(ATTRIBUTE_ONLY_TABLE_CONFIG)
+    assert parser.warnings()
+    result = parser.parse(b'<root><item id="1"/><item id="2"/></root>')
+    assert result["items"].num_rows == 0
+
+
 def test_exception_hierarchy() -> None:
     """Test that every public exception subclasses Xml2ArrowError and is catchable via it."""
     from xml2arrow import exceptions

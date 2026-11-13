@@ -164,7 +164,43 @@ and any other tool in the Arrow ecosystem.
 >     ...
 > ```
 
-### 4. Streaming documents too large for memory
+When the configuration is already in memory (an embedded default, one fetched
+from a service, or one built by a tool), `XmlToArrowParser.from_yaml_str(yaml)`
+builds the parser from the string. It is validated exactly as a file-loaded
+config is, and the parser pickles its YAML, so it works with multiprocessing
+without a config file.
+
+### 4. Check a config for surprises
+
+Constructing a parser rejects configurations that cannot work. `warnings()`
+reports the next tier: configurations that are valid but cannot do what they
+look like they do. For example, a table whose only fields are attributes of its
+own element:
+
+```python
+import logging
+
+parser = XmlToArrowParser("config.yaml")
+for warning in parser.warnings():
+    logging.warning("xml2arrow config: %s", warning)
+```
+
+```text
+Table 'stations' (xml_path /report/stations/station) has no configured child
+element, so no element close can finalize a row and the table will be empty.
+Attributes of the table element itself do not delimit rows; move the table's
+xml_path up one level so that <station> becomes its row element
+```
+
+Warnings are plain strings, never printed by the package, and purely advisory:
+asking for them cannot change how a document parses. They need no document, so
+checking once against a new configuration is cheap.
+
+For the runtime counterpart, "this field matched nothing in *this document*",
+set `parser_options.error_on_unmatched_fields`, which reports every such field
+at once.
+
+### 5. Streaming documents too large for memory
 
 `parse()` materializes every table in full, so peak memory grows with the
 document. For XML files that don't fit in memory (multi-GB exports,
@@ -214,7 +250,8 @@ with pq.ParquetWriter("out.parquet", reader.schema) as writer:
 Parsers are picklable, so they work directly with `multiprocessing` and
 `concurrent.futures.ProcessPoolExecutor`. The pickle carries the config file's
 path, and each worker re-reads and compiles that file, so the path must be
-readable from the worker processes too:
+readable from the worker processes too. A parser built with `from_yaml_str`
+pickles the YAML itself instead:
 
 ```python
 from concurrent.futures import ProcessPoolExecutor

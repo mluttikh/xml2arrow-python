@@ -44,6 +44,39 @@ class XmlToArrowParser:
                 than on the first ``parse()`` call.
         """
 
+    @staticmethod
+    def from_yaml_str(yaml: str) -> XmlToArrowParser:
+        """Creates a parser from a YAML configuration string.
+
+        The counterpart to the path constructor, for callers that already hold
+        the YAML: an embedded default, a configuration fetched from a service
+        or built by a tool, or a test that would rather not touch the
+        filesystem. The configuration is validated exactly as a file-loaded one
+        is. Named to match ``Config::from_yaml_str`` in the underlying Rust
+        crate.
+
+        Args:
+            yaml: The YAML configuration.
+
+        Returns:
+            A new parser instance.
+
+        Raises:
+            YamlParsingError: If the string is not valid YAML, or does not
+                describe a configuration.
+            InvalidConfigError: If the configuration parses but is not valid.
+
+        Example:
+            >>> parser = XmlToArrowParser.from_yaml_str('''
+            ... tables:
+            ...   - name: items
+            ...     xml_path: /data
+            ...     levels: []
+            ...     fields:
+            ...       - {name: value, xml_path: /data/item/value, data_type: Int32}
+            ... ''')
+        """
+
     def parse(
         self,
         source: str | PathLike[str] | bytes | bytearray | memoryview | IO[Any],
@@ -188,13 +221,33 @@ class XmlToArrowParser:
                 (structural tables — empty ``fields`` — produce no output).
         """
 
+    def warnings(self) -> list[str]:
+        """Returns advisory warnings about the configuration.
+
+        These flag configurations that are *valid* but cannot do what they
+        look like they do, such as a table that can never produce a row.
+        Warnings never change how a document parses, and this package never
+        prints them: what to do with them is your decision. Logging them at
+        startup is the usual choice.
+
+        Returns:
+            One message per finding, in configuration order. Empty when there
+            is nothing to flag.
+
+        Example:
+            >>> parser = XmlToArrowParser("config.yaml")
+            >>> for warning in parser.warnings():
+            ...     logging.warning("xml2arrow config: %s", warning)
+        """
+
     def __repr__(self) -> str: ...
     def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
         """Supports pickling, and therefore multiprocessing.
 
-        The pickle carries the configuration file's path, not the compiled
-        parser: the child process re-reads and recompiles that file, so it
-        must be readable there too.
+        The pickle carries the configuration, not the compiled parser, and the
+        receiving process recompiles it. For a parser built from a path that
+        is the path, so the file must be readable there too; for one built
+        with ``from_yaml_str`` it is the YAML itself.
         """
 
 @final

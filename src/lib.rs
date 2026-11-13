@@ -193,10 +193,19 @@ impl Read for XmlReader {
 /// reference, and pickle must be able to import it from that location.
 #[pyclass(name = "XmlToArrowParser", module = "xml2arrow._xml2arrow")]
 pub struct XmlToArrowParser {
-    config_path: PathBuf,
+    source: ConfigSource,
     /// Upstream's `Parser` is itself a handle over shared compiled state, so
     /// this is one refcounted trie however many streams are cloned off it.
     parser: Parser,
+}
+
+/// Where a parser's configuration came from: what `__repr__` shows and what
+/// `__reduce__` pickles, so a parser can be rebuilt in another process.
+enum ConfigSource {
+    Path(PathBuf),
+    /// The YAML text itself. There is no file to re-read, so a pickle carries
+    /// the configuration instead of a reference to it.
+    Yaml(String),
 }
 
 /// Folds the optional per-call overrides onto upstream's defaults. `None`
@@ -233,10 +242,40 @@ impl XmlToArrowParser {
         // Compile the config once here. `Parser::new` also runs config
         // validation, so an invalid config now surfaces at construction time
         // rather than on the first `parse()` call.
-        let config = Config::from_yaml_file(config_path.clone())?;
+        let config = Config::from_yaml_file(&config_path)?;
         Ok(XmlToArrowParser {
-            config_path,
+            source: ConfigSource::Path(config_path),
             parser: Parser::new(&config)?,
+        })
+    }
+
+    /// Creates a parser from a YAML configuration string.
+    ///
+    /// The counterpart to the path constructor, for callers that already hold
+    /// the YAML: an embedded default, a configuration fetched from a service
+    /// or built by a tool, or a test that would rather not touch the
+    /// filesystem. The configuration is validated exactly as a file-loaded one
+    /// is.
+    ///
+    /// Named to match upstream's `Config::from_yaml_str`, which it delegates
+    /// to, so the two APIs read the same side by side.
+    ///
+    /// Args:
+    ///     yaml (str): The YAML configuration.
+    ///
+    /// Returns:
+    ///     XmlToArrowParser: A new parser instance.
+    ///
+    /// Raises:
+    ///     YamlParsingError: If the string is not valid YAML, or does not
+    ///         describe a configuration.
+    ///     InvalidConfigError: If the configuration parses but is not valid.
+    #[staticmethod]
+    pub fn from_yaml_str(yaml: String) -> PyResult<Self> {
+        let config = Config::from_yaml_str(&yaml)?;
+        Ok(XmlToArrowParser {
+            parser: Parser::new(&config)?,
+            source: ConfigSource::Yaml(yaml),
         })
     }
 
@@ -401,25 +440,56 @@ impl XmlToArrowParser {
         }
     }
 
+    /// Returns advisory warnings about the configuration, as a list of
+    /// human-readable strings.
+    ///
+    /// These flag configurations that are *valid* but cannot do what they look
+    /// like they do, such as a table that can never produce a row. Warnings
+    /// never change how a document parses, and the library never prints them:
+    /// what to do with them is the caller's decision. Logging them at startup
+    /// is the usual choice.
+    ///
+    /// Returns:
+    ///     list[str]: One message per finding, in configuration order. Empty
+    ///     when there is nothing to flag.
+    pub fn warnings(&self) -> Vec<String> {
+        // Rendered to strings rather than mirrored structurally: upstream's
+        // `Lint` is `#[non_exhaustive]` and gains variants in minor releases,
+        // so a structured mirror here would either fall behind or need a
+        // binding change for every new lint. The `Display` text is what
+        // upstream documents for hosts to log.
+        self.parser
+            .warnings()
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    }
+
     fn __repr__(&self) -> String {
-        format!(
-            "XmlToArrowParser(config_path='{}')",
-            self.config_path.to_string_lossy()
-        )
+        match &self.source {
+            ConfigSource::Path(path) => {
+                format!("XmlToArrowParser(config_path='{}')", path.to_string_lossy())
+            }
+            ConfigSource::Yaml(_) => "XmlToArrowParser(<from YAML string>)".to_string(),
+        }
     }
 
     /// Supports pickling, and therefore multiprocessing. The pickle carries
-    /// the configuration *path*, not the compiled parser: the child process
-    /// re-reads and recompiles the file, so it must be readable there too.
+    /// the configuration, not the compiled parser, and the receiving process
+    /// recompiles it. For a path-built parser that is the *path*, so the file
+    /// must be readable there too; for a string-built one it is the YAML.
     fn __reduce__<'py>(
         &self,
         py: Python<'py>,
     ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>)> {
         let cls = py.get_type::<Self>();
-        Ok((
-            cls.into_any(),
-            PyTuple::new(py, [self.config_path.clone()])?,
-        ))
+        match &self.source {
+            ConfigSource::Path(path) => Ok((cls.into_any(), PyTuple::new(py, [path])?)),
+            ConfigSource::Yaml(yaml) => Ok((
+                cls.getattr("from_yaml_str")?,
+                PyTuple::new(py, [yaml.as_str()])?,
+            )),
+        }
     }
 }
 
