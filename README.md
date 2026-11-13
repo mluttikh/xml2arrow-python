@@ -170,8 +170,8 @@ and any other tool in the Arrow ecosystem.
 document. For XML files that don't fit in memory (multi-GB exports,
 Wikipedia-style dumps), `parse_batches()` yields each table's rows
 incrementally as `(table_name, batch)` tuples — memory stays bounded by the
-batch limits, and parsing runs on a background Rust thread that overlaps
-with your processing:
+batch limits. Parsing runs as you iterate, with the GIL released so other
+Python threads keep running:
 
 ```python
 parser = XmlToArrowParser("config.yaml")
