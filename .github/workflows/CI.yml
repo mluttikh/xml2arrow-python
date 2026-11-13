@@ -135,7 +135,7 @@ jobs:
           python -m mypy.stubtest --mypy-config-file pyproject.toml xml2arrow._xml2arrow
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           files: ./coverage.xml
           fail_ci_if_error: false
