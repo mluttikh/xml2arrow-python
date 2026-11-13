@@ -9,11 +9,13 @@ name = "_xml2arrow"
 crate-type = ["cdylib"]
 
 [dependencies]
-xml2arrow = { version = "0.19.0", features = ["python"] }
-arrow = { version = "59.0.0", features = ["pyarrow"] }
+# 0.20 is not on crates.io yet; the patch below resolves it from a pinned
+# xml2arrow `main` commit. Both are removed together at release time.
+xml2arrow = { version = "0.20.0", features = ["python"] }
+arrow = { version = "60.1.0", features = ["pyarrow"] }
 
 [dependencies.pyo3]
-version = "0.28"
+version = "0.29"
 features = ["extension-module", "abi3-py310"]
 
 # Wheel builds go through this profile (maturin build --release); the
@@ -22,3 +24,6 @@ features = ["extension-module", "abi3-py310"]
 lto = true
 codegen-units = 1
 strip = "symbols"
+
+[patch.crates-io]
+xml2arrow = { git = "https://github.com/mluttikh/xml2arrow", rev = "fb744e4c10d0f2a91ffb4c0ff57db3e3533a7fda" }

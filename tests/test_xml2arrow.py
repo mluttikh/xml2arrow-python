@@ -1004,11 +1004,9 @@ tables:
         parser.parse(xml_path)
 
 
-def test_non_xml_input_produces_empty_result(tmp_path: Path) -> None:
-    """Test that completely non-XML input is handled gracefully with an empty result."""
-    config_yaml = """
+ITEMS_CONFIG = """
 tables:
-  - name: test_table
+  - name: items
     xml_path: /root
     levels: []
     fields:
@@ -1017,16 +1015,116 @@ tables:
         data_type: Utf8
         nullable: true
 """
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(config_yaml)
 
-    xml_path = tmp_path / "data.xml"
-    xml_path.write_text("<<<not xml at all>>>")
 
-    parser = XmlToArrowParser(config_path)
-    result = parser.parse(xml_path)
+def test_non_xml_input_is_rejected(parser_factory) -> None:
+    """Input that is not XML fails instead of parsing to an empty result.
 
-    assert result["test_table"].num_rows == 0
+    The reader takes ``<<<not xml at all>>>`` as an element that never closes,
+    so the document is rejected as truncated.
+    """
+    parser = parser_factory(ITEMS_CONFIG)
+    with pytest.raises(XmlParsingError, match="Truncated document"):
+        parser.parse(b"<<<not xml at all>>>")
+
+
+@pytest.mark.parametrize("as_file", [False, True], ids=["bytes", "file"])
+def test_truncated_document_raises(parser_factory, tmp_path: Path, as_file: bool) -> None:
+    """A document cut off mid-element raises rather than returning a partial result.
+
+    Both input paths are covered: bytes go through the zero-copy parser, a
+    file through the buffered one.
+    """
+    parser = parser_factory(ITEMS_CONFIG)
+    xml = b"<root><item>a</item><item>b"
+    source = xml
+    if as_file:
+        source = tmp_path / "truncated.xml"
+        source.write_bytes(xml)
+    with pytest.raises(XmlParsingError, match=r"2 element\(s\) still open"):
+        parser.parse(source)
+
+
+def test_allow_truncated_input_keeps_the_closed_rows(parser_factory) -> None:
+    """``allow_truncated_input`` restores the rows that closed before the cut."""
+    parser = parser_factory(
+        ITEMS_CONFIG
+        + """
+parser_options:
+  allow_truncated_input: true
+"""
+    )
+    result = parser.parse(b"<root><item>a</item><item>b")
+    assert result["items"].column("value").to_pylist() == ["a"]
+
+
+def test_truncated_document_raises_at_the_end_of_a_stream(parser_factory) -> None:
+    """When streaming, rows before the cut are yielded and the error comes last."""
+    parser = parser_factory(ITEMS_CONFIG)
+    stream = parser.parse_batches(b"<root><item>a</item><item>b", max_rows_per_batch=1)
+    name, batch = next(stream)
+    assert name == "items"
+    assert batch.column("value").to_pylist() == ["a"]
+    with pytest.raises(XmlParsingError, match="Truncated document"):
+        next(stream)
+
+
+UNMATCHED_CONFIG = """
+tables:
+  - name: items
+    xml_path: /root
+    levels: []
+    fields:
+      - name: value
+        xml_path: /root/item
+        data_type: Utf8
+        nullable: true
+      - name: misspelled
+        xml_path: /root/itme
+        data_type: Utf8
+        nullable: true
+"""
+
+
+def test_error_on_unmatched_fields_names_the_field(parser_factory) -> None:
+    """A field whose path matched nothing fails the parse when asked to."""
+    parser = parser_factory(
+        UNMATCHED_CONFIG
+        + """
+parser_options:
+  error_on_unmatched_fields: true
+"""
+    )
+    with pytest.raises(ParseError, match=r"never matched.*misspelled"):
+        parser.parse(b"<root><item>a</item></root>")
+
+
+def test_unmatched_fields_are_allowed_by_default(parser_factory) -> None:
+    """Without the option, a field that matched nothing is an all-null column."""
+    parser = parser_factory(UNMATCHED_CONFIG)
+    result = parser.parse(b"<root><item>a</item></root>")
+    assert result["items"].column("misspelled").to_pylist() == [None]
+
+
+def test_max_value_bytes_rejects_a_large_value(parser_factory) -> None:
+    """A value longer than ``max_value_bytes`` raises; one at the limit does not."""
+    parser = parser_factory(
+        ITEMS_CONFIG
+        + """
+parser_options:
+  max_value_bytes: 4
+"""
+    )
+    assert parser.parse(b"<root><item>abcd</item></root>")["items"].num_rows == 1
+    with pytest.raises(XmlParsingError, match=r"'value'.*maximum of 4 bytes"):
+        parser.parse(b"<root><item>abcde</item></root>")
+
+
+def test_invalid_utf8_in_a_text_field_raises_parse_error(parser_factory) -> None:
+    """Invalid UTF-8 in a Utf8 field is a ParseError (before 0.20, a TypeError)."""
+    parser = parser_factory(ITEMS_CONFIG)
+    with pytest.raises(ParseError, match="utf-8"):
+        parser.parse(b"<root><item>\xff</item></root>")
 
 
 def test_parse_bytes_input(stations_parser: XmlToArrowParser, test_data_dir: Path) -> None:

@@ -47,6 +47,19 @@ parser_options:
   trim_text: <true|false>      # Trim whitespace from text nodes (default: false)
   stop_at_paths: [<xml_path>]  # Stop parsing after these closing tags (optional,
                                # useful for reading only a file header)
+  error_on_unmatched_fields: <true|false>  # Raise ParseError if a configured field
+                               # never matched anything in the document (default:
+                               # false). Catches misspelled xml_paths, whose symptom
+                               # is otherwise a silently all-null column. Fields below
+                               # a stop_at_paths path never match, so the two options
+                               # pull against each other.
+  max_value_bytes: <number>    # Cap on the bytes a single field value may hold;
+                               # a longer value raises XmlParsingError
+                               # (default: unlimited)
+  allow_truncated_input: <true|false>  # Accept a document that ends while elements
+                               # are still open, returning the rows that closed
+                               # before the cut (default: false, which raises
+                               # XmlParsingError). For recovery tooling only.
 tables:
   - name: <table_name>         # Name of the resulting PyArrow RecordBatch
     xml_path: <xml_path>       # Path to the element whose children are rows.
@@ -175,6 +188,12 @@ schema up front for schema-first sinks. One caveat inherent to single-pass
 XML: a parent element closes *after* its children, so a child batch can
 reference a parent row that arrives in a later batch of the parent table —
 irrelevant when each table goes to its own sink.
+
+Errors arrive where the parse meets them, so earlier batches may already have
+been yielded. A truncated file, for instance, is only detectable at its end,
+and raises `XmlParsingError` after every batch before the cut. Treat an
+exception from the iterator as invalidating everything the stream produced,
+e.g. by writing to a temporary file and renaming it only on success.
 
 When the config defines exactly one table with fields — the common shape for
 huge documents — `parse_single_table()` returns a native
