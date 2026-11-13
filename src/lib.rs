@@ -9,7 +9,6 @@ use pyo3::{
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use xml2arrow::config::Config;
 use xml2arrow::errors::{
     InvalidConfigError, ParseError, UnsupportedConversionError, Xml2ArrowError, XmlParsingError,
@@ -157,10 +156,16 @@ impl<'a, 'py> FromPyObject<'a, 'py> for XmlInput<'py> {
     }
 }
 
-/// A streaming adapter over `File` and file-like Python objects.
-/// `pub(crate)` because the streaming producer thread (src/streaming.rs)
-/// reads through the same adapter.
+/// A streaming adapter over every input kind, so the streaming API has one
+/// reader type to name rather than one per input.
+///
+/// `pub(crate)` because src/streaming.rs owns readers built from this.
 pub(crate) enum XmlReader {
+    /// In-memory input, for the streaming API only, which needs a reader it
+    /// can own; `parse()` takes the zero-copy slice path instead. A `bytes`
+    /// object is shared, anything mutable was copied when it was extracted.
+    SharedBuffer(std::io::Cursor<pyo3::pybacked::PyBackedBytes>),
+    Buffer(std::io::Cursor<Vec<u8>>),
     File(File),
     FileLike(PyBinaryFile),
 }
@@ -168,6 +173,8 @@ pub(crate) enum XmlReader {
 impl Read for XmlReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         match self {
+            Self::SharedBuffer(c) => c.read(buf),
+            Self::Buffer(c) => c.read(buf),
             Self::File(f) => f.read(buf),
             Self::FileLike(f) => f.read(buf),
         }
@@ -187,10 +194,9 @@ impl Read for XmlReader {
 #[pyclass(name = "XmlToArrowParser", module = "xml2arrow._xml2arrow")]
 pub struct XmlToArrowParser {
     config_path: PathBuf,
-    /// `Arc` so the streaming producer threads (src/streaming.rs) can hold
-    /// the compiled parser beyond this pyclass's GIL-bound lifetime; the
-    /// synchronous `parse()` path just derefs through it.
-    parser: Arc<Parser>,
+    /// Upstream's `Parser` is itself a handle over shared compiled state, so
+    /// this is one refcounted trie however many streams are cloned off it.
+    parser: Parser,
 }
 
 /// Folds the optional per-call overrides onto upstream's defaults. `None`
@@ -230,7 +236,7 @@ impl XmlToArrowParser {
         let config = Config::from_yaml_file(config_path.clone())?;
         Ok(XmlToArrowParser {
             config_path,
-            parser: Arc::new(Parser::new(&config)?),
+            parser: Parser::new(&config)?,
         })
     }
 
@@ -289,8 +295,8 @@ impl XmlToArrowParser {
     /// Concatenating a table's batches in yield order reproduces exactly what
     /// ``parse()`` would have returned for it.
     ///
-    /// Parsing runs on a background thread that stays at most a couple of
-    /// batches ahead, so iterating overlaps parsing with your processing.
+    /// Parsing happens as you iterate, on the calling thread, releasing the
+    /// GIL for each batch so other Python threads keep running.
     ///
     /// Args:
     ///     source: The XML to parse. Accepts ``str``, ``os.PathLike``,
@@ -307,9 +313,6 @@ impl XmlToArrowParser {
     /// Raises:
     ///     Xml2ArrowError: From the iterator, not this call, when parsing
     ///         fails mid-stream. Batches yielded before it remain valid.
-    ///     RuntimeError: From the iterator, if the background parser thread
-    ///         panics. That is a bug in the parser; the stream is truncated,
-    ///         so the batches yielded so far are an incomplete answer.
     #[pyo3(signature = (source, *, max_rows_per_batch=None, max_bytes_per_batch=None))]
     pub fn parse_batches(
         &self,
@@ -336,9 +339,9 @@ impl XmlToArrowParser {
     /// Args:
     ///     source: The XML to parse. Accepts ``str``, ``os.PathLike``,
     ///         ``bytes``, ``bytearray``, a buffer-protocol object (``memoryview``,
-    ///         NumPy ``uint8`` arrays, ...), or a readable file-like object
-    ///         (file-like objects are read fully into memory up front;
-    ///         prefer paths for huge inputs).
+    ///         NumPy ``uint8`` arrays, ...), or a readable file-like object.
+    ///         Files and file-like objects are read incrementally, so memory
+    ///         stays bounded by the batch limits.
     ///     max_rows_per_batch: Rows per batch before a flush (default 8192).
     ///     max_bytes_per_batch: Value bytes per batch before a flush
     ///         (default 128 MiB).
